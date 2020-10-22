@@ -36,11 +36,11 @@ set(${PROJECT_NAME}_PROGRAMMER avrispmkii)
 # contents: SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyNano"
 if(LINUX)
     set(${PROJECT_NAME}_PORT /dev/ttyNano)
+    message("Me Thinks LINUX")
 else()
     set(${PROJECT_NAME}_PORT /dev/cu.usbserial-141310)
+    message("Me Thinks NOT LINUX")
 endif()
-message(LINUX: ${LINUX})
-message(APPLE: ${APPLE})
 
 # set(nano.upload.speed 9600)
 
