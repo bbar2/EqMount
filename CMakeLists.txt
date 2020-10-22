@@ -34,7 +34,8 @@ set(${PROJECT_NAME}_PROGRAMMER avrispmkii)
 
 # See documentation for udevadm and /etc/udev/rules.d/10-usb-serial.rules
 # contents: SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyNano"
-if(LINUX)
+
+if(CMAKE_CURRENT_SOURCE_DIR MATCHES "home")
     set(${PROJECT_NAME}_PORT /dev/ttyNano)
     message("Me Thinks LINUX")
 else()
