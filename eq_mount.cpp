@@ -85,7 +85,7 @@ void setup() {
 void step200(int multiples=1)
 {
 	for (int num_steps=0; num_steps < 200*multiples; num_steps++){
-		motor_driver.step();
+		motor_driver.singleStep();
 		delay(10);
 	}
 }
@@ -118,14 +118,12 @@ void loop() {
 		}
 	}
 
-
 	const int LOW2 = 5;   // CCW_2
 	const int LOW1 = 400;   // CCW_1
 	const int HIGH1 = 550;  // CW_1
 	const int HIGH2 = 1020;  // CW_2
 
 	static bool mode_change_required = true;
-
 
 	if (sleep_mode)
 	{
@@ -190,7 +188,7 @@ void loop() {
 		}
 
 		// Step the motor
-		motor_driver.step(step_period_us(current_mode));
+		motor_driver.singleStep(step_period_us(current_mode));
 
 	} // not sleep_mode
 }

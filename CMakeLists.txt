@@ -9,8 +9,8 @@ set(ARDUINO_CPU atmega328old)
 project(${PROJECT_NAME})
 
 # Define additional source and header files or default arduino sketch files
-set(${PROJECT_NAME}_SRCS eq_mount.cpp)
-set(${PROJECT_NAME}_HDRS CA4998.hpp)
+set(${PROJECT_NAME}_SRCS eq_mount.cpp TimerOne.cpp)
+set(${PROJECT_NAME}_HDRS CA4998.hpp TimerOne.h)
 
 ### Additional static libraries to include in the target.
 # set(${PROJECT_NAME}_LIBS)
@@ -32,15 +32,15 @@ link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../libraries)
 #### Additional settings for programmer. From programmers.txt
 set(${PROJECT_NAME}_PROGRAMMER avrispmkii)
 
-# See documentation for udevadm and /etc/udev/rules.d/10-usb-serial.rules
-# contents: SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyNano"
-
-if(CMAKE_CURRENT_SOURCE_DIR MATCHES "home")
+# arduino builds on a linux system, will be under /home path
+# arduino builds on the Apple system, will be under /Users path
+# Check path, to select development system dependent settings
+if(CMAKE_CURRENT_SOURCE_DIR MATCHES "/home/")
+    # See documentation for udevadm and /etc/udev/rules.d/10-usb-serial.rules contents:
+    #   SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyNano"
     set(${PROJECT_NAME}_PORT /dev/ttyNano)
-    message("Me Thinks LINUX")
 else()
     set(${PROJECT_NAME}_PORT /dev/cu.usbserial-141310)
-    message("Me Thinks NOT LINUX")
 endif()
 
 # set(nano.upload.speed 9600)
