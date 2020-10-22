@@ -6,7 +6,12 @@
 //   - must specify STEP pin at a minimum.  All others optional.
 //
 // setStepLevel(level) - LOW to HIGH transition causes one micro step.
-// step() - Transition to HIGH, 1ms delay, transition to LOW.
+//
+// Object owner can set motor speed by calling singleStep() in a loop with delay() for timing,
+// or control a timed series of pulses with start() and stop().
+//   singleStep(width_us) - One pulse HIGH for width_us/2 and LOW for width_us/2.
+//   start(period_us) - Use Timer 1 to send pulses on m_step_pin
+//   stop() - stop sending pulses on m_step_pin
 //
 // setStepMode(1, 2, 4, 8, 16) - Select micro step mode.  1 is Full Steps.
 //
@@ -22,6 +27,7 @@
 //   - Select Vref (volts) = Motor Current Limit (amps) / 2.5
 
 #pragma once
+#include "TimerOne.h" // instantiates at Timer1 object.
 
 class CA4998
 {
@@ -56,9 +62,9 @@ private: // methods
 	}
 
 public: // methods
-	explicit CA4998(
-			int pin7_step,        // only pin you must specify
-			int pin8_dir = 0,     // floats - must be wired if not assigned to a pin.
+	explicit CA4998( // can be called before setup(), so no system calls
+			int pin7_step,    // only pin you must specify
+			int pin8_dir = 0, // floats - must be wired if not assigned to a pin.
 			int pin2_m1 = 0, int pin3_m2 = 0, int pin4_m3 = 0, // pulled LOW internally
 			int pin5_reset  = 0,   // floats - can tie to sleep to pull high
 			int pin1_enable = 0,   // pulled LOW internally
@@ -160,7 +166,7 @@ public: // methods
 		digitalWrite(m_step_pin, step_level);
 	};
 
-	void step(unsigned long pulse_width_us = 1000) const {
+	void singleStep(unsigned long pulse_width_us = 1000) const {
 
 		unsigned long half_width = pulse_width_us / 2;
 
