@@ -27,7 +27,7 @@
 //   - Select Vref (volts) = Motor Current Limit (amps) / 2.5
 
 #pragma once
-#include "TimerOne.h" // instantiates at Timer1 object.
+#include "TimerOne.h" // instantiates at Timer1 object.  f
 
 class CA4998
 {
