@@ -1,0 +1,173 @@
+//
+// Created by barry on 10/13/20.
+// Header only class to manage a A4998 stepper driver.
+//
+// Construct identifying pins wired to Arduino
+//   - must specify STEP pin at a minimum.  All others optional.
+//
+// setStepLevel(level) - LOW to HIGH transition causes one micro step.
+// step() - Transition to HIGH, 1ms delay, transition to LOW.
+//
+// setStepMode(1, 2, 4, 8, 16) - Select micro step mode.  1 is Full Steps.
+//
+// sleep() if motor not in use, to minimize power.  Else set to wake();
+//
+// reset(LOW):
+//   - resets state of micro stepper.
+//   - Ignores STEP pulses
+//
+// To set A4998 current limiting trim pot voltage, measuring Vref on trim pot:
+//   - Put A4988 in full step mode
+//   - While not clocking STEP input
+//   - Select Vref (volts) = Motor Current Limit (amps) / 2.5
+
+#pragma once
+
+class CA4998
+{
+public: // members
+	typedef enum {
+		CLOCKWISE     = HIGH,
+		COUNTER_CLOCK = LOW
+	} DirectionType;
+
+	typedef  enum {
+		FULL_STEP = 1,
+		HALF_STEP = 2,
+		QUARTER_STEP = 4,
+		EIGHTH_STEP = 8,
+		SIXTEENTH_STEP = 16
+	} StepType;
+
+private: // members
+	int m_enable_pin;
+	int m_m1_pin, m_m2_pin, m_m3_pin;
+	int m_reset_pin;
+	int m_sleep_pin;
+	int m_step_pin;
+	int m_dir_pin;
+
+private: // methods
+	void myDelayUs(unsigned long request_delay_us) const {
+		unsigned long delay_us = request_delay_us % 1000;
+		unsigned long delay_ms = request_delay_us / 1000;
+		if (delay_us) delayMicroseconds(delay_us);
+		if (delay_ms) delay(delay_ms);
+	}
+
+public: // methods
+	explicit CA4998(
+			int pin7_step,        // only pin you must specify
+			int pin8_dir = 0,     // floats - must be wired if not assigned to a pin.
+			int pin2_m1 = 0, int pin3_m2 = 0, int pin4_m3 = 0, // pulled LOW internally
+			int pin5_reset  = 0,   // floats - can tie to sleep to pull high
+			int pin1_enable = 0,   // pulled LOW internally
+			int pin6_sleep  = 0) : // pulled HIGH internally.
+			m_step_pin(pin7_step),
+			m_dir_pin(pin8_dir),
+			m_m1_pin(pin2_m1), m_m2_pin(pin3_m2), m_m3_pin(pin4_m3),
+			m_reset_pin(pin5_reset),
+			m_enable_pin(pin1_enable),
+			m_sleep_pin(pin6_sleep)
+	{
+	}
+
+	void init(StepType initial_step_mode = FULL_STEP,
+					 DirectionType start_dir = CLOCKWISE) {
+
+		// Configure used arduino IO pins as outputs
+		pinMode(m_step_pin, OUTPUT);
+		if (m_dir_pin)pinMode(m_dir_pin, OUTPUT);
+		if (m_m1_pin)pinMode(m_m1_pin, OUTPUT);
+		if (m_m2_pin)pinMode(m_m2_pin, OUTPUT);
+		if (m_m3_pin)pinMode(m_m3_pin, OUTPUT);
+		if (m_enable_pin)pinMode(m_enable_pin, OUTPUT);
+		if (m_reset_pin)pinMode(m_reset_pin, OUTPUT);
+		if (m_sleep_pin)pinMode(m_sleep_pin, OUTPUT);
+
+		// initialize outputs to active state
+		this->disable();  // while messing with other pins
+		this->setStepMode(initial_step_mode); // Sets reset() too.
+		this->setStepLevel(LOW);  // Ready for LOW to HIGH transition.
+		this->setDirection(start_dir); // HIGH clockwise, LOW counter
+		this->wake();             // Not sleeping in low power mode.
+		this->enable();           // all set, so enable
+	};
+
+	void disable() const { digitalWrite(m_enable_pin, HIGH); };
+
+	void enable() const { digitalWrite(m_enable_pin, LOW); };
+
+	void setStepMode(StepType step_mode) const // must be set 20ns prior to step()
+	{
+		switch(step_mode)
+		{
+			case HALF_STEP:
+				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
+				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
+				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
+				Serial.println("HALF_STEP Set");
+				break;
+
+			case QUARTER_STEP:
+				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
+				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
+				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
+				Serial.println("QUARTER_STEP Set");
+				break;
+
+			case EIGHTH_STEP:
+				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
+				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
+				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
+				Serial.println("EIGHTH_STEP Set");
+				break;
+
+			case SIXTEENTH_STEP:
+				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
+				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
+				if(m_m3_pin)digitalWrite(m_m3_pin, HIGH);
+				Serial.println("SIXTEENTH_STEP Set");
+				break;
+
+			default:  // Full Step
+				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
+				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
+				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
+				Serial.println("FULL_STEP Set");
+		}
+
+		// Issue a reset
+		this->reset();
+	};
+
+	void setDirection(DirectionType dir_level) const {
+		if(m_dir_pin)digitalWrite(m_dir_pin, dir_level);
+	};
+
+	void reset() const {
+		if(m_reset_pin)digitalWrite(m_reset_pin, LOW);
+		delay(10);
+		if(m_reset_pin)digitalWrite(m_reset_pin, HIGH);
+		delay(10);
+	};
+
+	void sleep() const { if(m_sleep_pin)digitalWrite(m_sleep_pin, LOW); };
+
+	void wake() const { if(m_sleep_pin)digitalWrite(m_sleep_pin, HIGH);	};
+
+	void setStepLevel(int step_level) const {
+		digitalWrite(m_step_pin, step_level);
+	};
+
+	void step(unsigned long pulse_width_us = 1000) const {
+
+		unsigned long half_width = pulse_width_us / 2;
+
+		digitalWrite(m_step_pin, HIGH);
+		myDelayUs(half_width);
+		digitalWrite(m_step_pin, LOW);
+		myDelayUs(half_width);
+	}
+
+};
