@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.4)
+cmake_minimum_required(VERSION 3.15)
 set(CMAKE_TOOLCHAIN_FILE ${CMAKE_SOURCE_DIR}/cmake/ArduinoToolchain.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -34,7 +34,14 @@ set(${PROJECT_NAME}_PROGRAMMER avrispmkii)
 
 # See documentation for udevadm and /etc/udev/rules.d/10-usb-serial.rules
 # contents: SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyNano"
-set(${PROJECT_NAME}_PORT /dev/ttyNano)
+if(LINUX)
+    set(${PROJECT_NAME}_PORT /dev/ttyNano)
+else()
+    set(${PROJECT_NAME}_PORT /dev/cu.usbserial-141310)
+endif()
+message(LINUX: ${LINUX})
+message(APPLE: ${APPLE})
+
 # set(nano.upload.speed 9600)
 
 ## Verbose build process

@@ -74,8 +74,6 @@ void setup() {
 		delay(i);
 	}
 
-
-
 	pinMode(LED_BUILTIN, OUTPUT);
 	pinMode(A0, INPUT_PULLUP);
 	pinMode(A1, OUTPUT);
