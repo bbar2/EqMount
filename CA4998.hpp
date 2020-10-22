@@ -52,6 +52,7 @@ private: // members
 	int m_sleep_pin;
 	int m_step_pin;
 	int m_dir_pin;
+	static CA4998* static_object;
 
 private: // methods
 	void myDelayUs(unsigned long request_delay_us) const {
@@ -76,6 +77,7 @@ public: // methods
 			m_enable_pin(pin1_enable),
 			m_sleep_pin(pin6_sleep)
 	{
+		CA4998::static_object = this; // a non c++ target for the timer 1 interrupt
 	}
 
 	void init(StepType initial_step_mode = FULL_STEP,
@@ -176,4 +178,33 @@ public: // methods
 		myDelayUs(half_width);
 	}
 
+	// Timer function toggles the pulse input
+	static void staticTimerFunc();
+
+	void start(unsigned long period_us)
+	{
+		CA4998::static_object = this;
+		Timer1.initialize(period_us/2); // 1st for rising edge, 2nd for falling
+		Timer1.attachInterrupt(CA4998::staticTimerFunc);
+		Timer1.start();
+	}
+
+	void stop()
+	{
+		Timer1.stop();
+	}
 };
+
+CA4998* CA4998::static_object = nullptr;
+
+// Timer function toggles the pulse input
+void CA4998::staticTimerFunc()
+{
+	static bool pulse_level_high = false;
+
+	if(static_object) {
+		digitalWrite(static_object->m_step_pin, pulse_level_high? HIGH : LOW);
+		pulse_level_high = !pulse_level_high;
+	}
+};
+

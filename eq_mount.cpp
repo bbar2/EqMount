@@ -16,7 +16,7 @@ typedef enum {
 
 OpModeType current_mode = CW_NORMAL;
 
-const int PULSE_FAST2_US = 400;
+const int PULSE_FAST2_US = 600;
 const int PULSE_FAST1_US = 400;
 const int PULSE_NORMAL_US = 10000;
 
@@ -102,7 +102,7 @@ void loop() {
 	unsigned long release_ms;
 	static bool push_active = false;
 
-	if(analogRead(A0) < 500)
+	if(sleep < 500)
 	{
 		push_ms = millis();
 		push_active = true;
@@ -183,12 +183,15 @@ void loop() {
 
 		if (mode_change_required)
 		{
+			motor_driver.stop();
 			motor_driver.init(step_mode(current_mode), step_direction(current_mode));
 			mode_change_required = false;
+			motor_driver.start(step_period_us(current_mode));
+			Serial.println("Mode Change Complete");
 		}
 
 		// Step the motor
-		motor_driver.singleStep(step_period_us(current_mode));
+		//motor_driver.singleStep(step_period_us(current_mode));
 
 	} // not sleep_mode
 }
