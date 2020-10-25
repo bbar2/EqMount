@@ -1,53 +1,92 @@
 #include <Arduino.h>
 #include "CA4998.hpp"
 
-const int PULSE_NORMAL_US = 10000;
-const int PULSE_FAST1_US = 100;
+// Use CA4998.h micro step controller to control a camera mount
+// stepper motor.
+//   - CA4998.h uses Timer1 to step the motor
+
+// Joystick analog position selects speed and direction.
+//   - NORMAL operation is near neutral position.
+//   - moving away from neutral position speeds motor in either direction.
+// Joystick discrete switch toggles lower power sleep mode.
+
+typedef enum {
+	REVERSE_FAST_2,
+	REVERSE_FAST_1,
+	FORWARD_NORMAL,    // joystick in neutral position
+	FORWARD_FAST_1,
+	FORWARD_FAST_2
+} OpModeType;
+OpModeType current_mode = FORWARD_NORMAL;
+
+// Joystick levels select OpMode, 0 to 1023 reported by analogRead
+const int POT_NEUTRAL = 485; // as measured
+const int DEAD_BAND  = 30;
+const int POT_LOW_2  = 5;
+const int POT_LOW_1  = POT_NEUTRAL - DEAD_BAND;
+const int POT_HIGH_1 = POT_NEUTRAL + DEAD_BAND;
+const int POT_HIGH_2 = 1020;
+
+// The motor speed of each mode is set by PULSE_US and STEP_MODE
+const int PULSE_NORMAL_US = 97389;
+const int PULSE_FAST1_US = 400;
 const int PULSE_FAST2_US = 50;
 
 const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
 const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
 const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
 
+// Assign analog input channels
+const int JOYSTICK_SWITCH = A0; // Analog to use internal pull up.
+const int JOYSTICK_INPUT  = A6;
+
+// Construct the driver object, inputs select DIO channels (or A0-A5)
 CA4998 motor_driver(
 		4, 5,            // pin7_step, pin8_dir
 		6, 7, 8, // pin2_m1, pin3_m2, pin4_m3
-		9, 0, A1);   // pin5_reset, pin1_enable, pin6_sleep
+		9, A1);                 // pin5_reset, pin6_sleep
 
-typedef enum {
-	CCW_2,
-	CCW_1,
-	CW_NORMAL,
-	CW_1,
-	CW_2
-} OpModeType;
+// Convert analog read of potentiometer, to operating mode
+OpModeType selectOpMode(unsigned int input_pot){
+	if (input_pot <= POT_LOW_2) {
+		return(REVERSE_FAST_2);  // pot <= LOW2
+	} else if (input_pot <= POT_LOW_1) {
+		return(REVERSE_FAST_1);  // LOW2 < pot <= LOW1
+	} else if (input_pot <= POT_HIGH_1) {
+		return(FORWARD_NORMAL);  // LOW1 < pot <= HIGH1
+	} else if (input_pot <= POT_HIGH_2) {
+		return(FORWARD_FAST_1);  // HIGH1 < pot < HIGH2
+	} else {
+		return(FORWARD_FAST_2);  // pot > HIGH2
+	}
+}
 
-OpModeType current_mode = CW_NORMAL;
-
-
+// Convert operating mode to motor step period
 unsigned long step_period_us(OpModeType mode)
 {
-	if (mode == CW_1 || mode == CCW_1){
+	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1){
 		return PULSE_FAST1_US;
-	} else if (mode == CW_2 || mode == CCW_2) {
+	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
 		return PULSE_FAST2_US;
 	} else {
 		return PULSE_NORMAL_US;
 	}
 }
 
+// Convert operating mode to motor step direction
 CA4998::DirectionType step_direction(OpModeType mode) {
-	if (mode == CW_NORMAL || mode == CW_1 || mode == CW_2) {
+	if (mode == FORWARD_NORMAL || mode == FORWARD_FAST_1 || mode == FORWARD_FAST_2) {
 		return CA4998::CLOCKWISE;
 	} else {
 		return CA4998::COUNTER_CLOCK;
 	}
 }
 
+// Convert operating mode to motor controller micro step mode
 CA4998::StepType step_mode(OpModeType mode) {
-	if (mode == CW_1 || mode == CCW_1){
+	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1){
 		return FAST1_STEP_MODE;
-	} else if (mode == CW_2 || mode == CCW_2) {
+	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
 		return FAST2_STEP_MODE;
 	} else {
 		return NORMAL_STEP_MODE;
@@ -56,27 +95,23 @@ CA4998::StepType step_mode(OpModeType mode) {
 
 void setup() {
 	Serial.begin(9600);
-	for (int i = 0; i < 100; i+=6)
-	{
-		digitalWrite(LED_BUILTIN, HIGH);
-		delay(i);
-		digitalWrite(LED_BUILTIN, LOW);
-		delay(i);
-	}
 
-	pinMode(LED_BUILTIN, OUTPUT);
-	pinMode(A0, INPUT_PULLUP);
-	pinMode(A1, OUTPUT);
+	pinMode(JOYSTICK_SWITCH, INPUT_PULLUP);  // for joystick switch input
 
-	current_mode = CW_NORMAL;
+	Serial.print("Neutral Pot = ");
+	Serial.println(analogRead(A6));
+
+	current_mode = FORWARD_NORMAL;
 	motor_driver.init(
 			step_mode(current_mode),
 			step_direction(current_mode));
+	motor_driver.start(step_period_us(current_mode));
 }
 
 void loop() {
 
-	int pot = analogRead(A6);
+	OpModeType next_mode = FORWARD_NORMAL;
+
 	int sleep = analogRead(A0);
 
 	//Debounce the pushbutton
@@ -102,13 +137,6 @@ void loop() {
 		}
 	}
 
-	const int LOW2 = 5;     // CCW_2
-	const int LOW1 = 400;   // CCW_1
-	const int HIGH1 = 550;  // CW_1
-	const int HIGH2 = 1020; // CW_2
-
-	static bool mode_change_required = true;
-
 	if (sleep_mode)
 	{
 		motor_driver.sleep();
@@ -117,67 +145,25 @@ void loop() {
 	{
 		motor_driver.wake();
 
-		// See if mode change required
-		if (pot < LOW2)
-		{
-			if (current_mode != CCW_2)
-			{
-				current_mode = CCW_2;
-				mode_change_required = true;
-//				Serial.print(pot);
-//				Serial.println("CCW_2");
-			}
-		} else if (pot >= LOW2 && pot < LOW1)
-		{
-			if (current_mode != CCW_1)
-			{
-				current_mode = CCW_1;
-				mode_change_required = true;
-//				Serial.print(pot);
-//				Serial.println("CCW_1");
-			}
-		} else if (pot >= LOW2 && pot < HIGH1)
-		{
-			if (current_mode != CW_NORMAL)
-			{
-				current_mode = CW_NORMAL;
-				mode_change_required = true;
-//				Serial.print(pot);
-//				Serial.println("CW_NORMAL");
-			}
-		} else if (pot >= HIGH1 && pot < HIGH2)
-		{
-			if (current_mode != CW_1)
-			{
-				current_mode = CW_1;
-				mode_change_required = true;
-//				Serial.print(pot);
-//				Serial.println(" CW_1");
-			}
-		} else // pot >= HIGH2
-		{
-			if (current_mode != CW_2)
-			{
-				current_mode = CW_2;
-				mode_change_required = true;
-//				Serial.print(pot);
-//				Serial.println("CW_2");
-			}
-		}
+		// Select operating mode based on pot position
+		next_mode = selectOpMode(analogRead(JOYSTICK_INPUT));
 
-		if (mode_change_required)
+		// change modes
+		if (next_mode != current_mode)
 		{
-			motor_driver.stop();
-			motor_driver.init(
-					step_mode(current_mode),
-					step_direction(current_mode));
-			mode_change_required = false;
-			motor_driver.start(step_period_us(current_mode));
-//			Serial.println("Mode Change Complete");
+			// stop() can be expensive, so only change modes if necessary
+			if (step_mode(next_mode) != step_mode(current_mode) )
+			{
+				// waits up to 32 timer 1 pulses, allowing micro stepping
+				// driver state to return to HOME position
+				motor_driver.stop();
+				// Only change modes in HOME position
+				motor_driver.setStepMode(step_mode(next_mode));
+			}
+			motor_driver.setDirection(step_direction(next_mode));
+			motor_driver.start(step_period_us(next_mode));
+			current_mode = next_mode;
 		}
-
-		// Step the motor
-		//motor_driver.singleStep(step_period_us(current_mode));
 
 	} // not sleep_mode
 }

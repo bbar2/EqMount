@@ -51,7 +51,7 @@ private: // members
 	int m_sleep_pin;
 	int m_step_pin;
 	int m_dir_pin;
-	volatile int m_micro_step_num;
+	volatile int m_micro_step_num;  // volatile because ISR changes it.
 	int m_num_steps_current_mode;
 	static CA4998* static_object;
 
@@ -69,14 +69,14 @@ public: // methods
 			int pin8_dir = 0, // floats - must be wired if not assigned to a pin.
 			int pin2_m1 = 0, int pin3_m2 = 0, int pin4_m3 = 0, // pulled LOW internally
 			int pin5_reset  = 0,   // floats - can tie to sleep to pull high
-			int pin1_enable = 0,   // pulled LOW internally
-			int pin6_sleep  = 0) : // pulled HIGH internally.
+			int pin6_sleep  = 0,   // pulled HIGH internally.
+    	int pin1_enable = 0) : // pulled LOW internally
 			m_step_pin(pin7_step),
 			m_dir_pin(pin8_dir),
 			m_m1_pin(pin2_m1), m_m2_pin(pin3_m2), m_m3_pin(pin4_m3),
 			m_reset_pin(pin5_reset),
-			m_enable_pin(pin1_enable),
 			m_sleep_pin(pin6_sleep),
+			m_enable_pin(pin1_enable),
 			m_micro_step_num(0),
 			m_num_steps_current_mode(0)
 	{
@@ -97,12 +97,15 @@ public: // methods
 		if (m_sleep_pin)pinMode(m_sleep_pin, OUTPUT);
 
 		// initialize outputs to active state
-		this->disable();  // while messing with other pins
 		this->setStepMode(initial_step_mode); // Sets reset() too.
 		this->setStepLevel(LOW);  // Ready for LOW to HIGH transition.
 		this->setDirection(start_dir); // HIGH clockwise, LOW counter
 		this->wake();             // Not sleeping in low power mode.
 		this->enable();           // all set, so enable
+
+		// Prepare for timer operation
+		CA4998::static_object = this;
+		Timer1.attachInterrupt(CA4998::staticTimerFunc);
 	};
 
 	void disable() const { digitalWrite(m_enable_pin, HIGH); };
@@ -117,7 +120,7 @@ public: // methods
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_num_steps_current_mode = 2*4; // *4 to complete a full cycle
+				m_num_steps_current_mode = 2*4; // *4 to complete a full cycle back to HOME state
 				break;
 
 			case QUARTER_STEP:
@@ -188,14 +191,14 @@ public: // methods
 
 	void start(unsigned long period_us)
 	{
-		CA4998::static_object = this;
-		Timer1.initialize(period_us/2); // 1st for rising edge, 2nd for falling
-		Timer1.attachInterrupt(CA4998::staticTimerFunc);
+		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
+		Timer1.initialize(period_us/2);
 		Timer1.start();
 	}
 
 	void stop()
 	{
+		// Wait for controller to return to HOME state
 		while(m_micro_step_num != 0){};
 		Timer1.stop();
 	}
@@ -214,7 +217,7 @@ void CA4998::staticTimerFunc()
 		digitalWrite(static_object->m_step_pin, pulse_level_high? HIGH : LOW);
 		pulse_level_high = !pulse_level_high;
 
-		// Count pulses to sync mode changes with the starting condition
+		// Count pulses to sync mode changes with the HOME state
 		int last_edge = static_object->m_num_steps_current_mode * 2;
 		if (++(static_object->m_micro_step_num) >= last_edge) {
 			static_object->m_micro_step_num = 0;
