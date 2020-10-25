@@ -1,10 +1,18 @@
 #include <Arduino.h>
 #include "CA4998.hpp"
 
+const int PULSE_NORMAL_US = 10000;
+const int PULSE_FAST1_US = 100;
+const int PULSE_FAST2_US = 50;
+
+const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
+const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
+const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
+
 CA4998 motor_driver(
-		4, 5,           // pin7_step, pin8_dir
-		6, 7, 8,   // pin2_m1, pin3_m2, pin4_m3
-		9);//, PIN_A4, PIN_A3 ); // pin5_reset, pin1_enable, pin6_sleep
+		4, 5,            // pin7_step, pin8_dir
+		6, 7, 8, // pin2_m1, pin3_m2, pin4_m3
+		9, 0, A1);   // pin5_reset, pin1_enable, pin6_sleep
 
 typedef enum {
 	CCW_2,
@@ -16,26 +24,10 @@ typedef enum {
 
 OpModeType current_mode = CW_NORMAL;
 
-const int PULSE_FAST2_US = 600;
-const int PULSE_FAST1_US = 400;
-const int PULSE_NORMAL_US = 10000;
-
-const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
-const CA4998::StepType FAST1_STEP_MODE = CA4998::QUARTER_STEP;
-const CA4998::StepType FAST2_STEP_MODE = CA4998::HALF_STEP;
-
-static int motor_pulse_output = LOW;
-void timerInterrupt() {
-	if (motor_pulse_output == LOW) {
-
-	}
-}
 
 unsigned long step_period_us(OpModeType mode)
 {
-	if (mode == CW_NORMAL) {
-		return PULSE_NORMAL_US;
-	} else if (mode == CW_1 || mode == CCW_1){
+	if (mode == CW_1 || mode == CCW_1){
 		return PULSE_FAST1_US;
 	} else if (mode == CW_2 || mode == CCW_2) {
 		return PULSE_FAST2_US;
@@ -53,9 +45,7 @@ CA4998::DirectionType step_direction(OpModeType mode) {
 }
 
 CA4998::StepType step_mode(OpModeType mode) {
-	if (mode == CW_NORMAL){
-		return NORMAL_STEP_MODE;
-	} else if (mode == CW_1 || mode == CCW_1){
+	if (mode == CW_1 || mode == CCW_1){
 		return FAST1_STEP_MODE;
 	} else if (mode == CW_2 || mode == CCW_2) {
 		return FAST2_STEP_MODE;
@@ -79,15 +69,9 @@ void setup() {
 	pinMode(A1, OUTPUT);
 
 	current_mode = CW_NORMAL;
-	motor_driver.init(step_mode(current_mode), step_direction(current_mode));
-}
-
-void step200(int multiples=1)
-{
-	for (int num_steps=0; num_steps < 200*multiples; num_steps++){
-		motor_driver.singleStep();
-		delay(10);
-	}
+	motor_driver.init(
+			step_mode(current_mode),
+			step_direction(current_mode));
 }
 
 void loop() {
@@ -118,20 +102,20 @@ void loop() {
 		}
 	}
 
-	const int LOW2 = 5;   // CCW_2
+	const int LOW2 = 5;     // CCW_2
 	const int LOW1 = 400;   // CCW_1
 	const int HIGH1 = 550;  // CW_1
-	const int HIGH2 = 1020;  // CW_2
+	const int HIGH2 = 1020; // CW_2
 
 	static bool mode_change_required = true;
 
 	if (sleep_mode)
 	{
-		digitalWrite(A1, LOW);
+		motor_driver.sleep();
 	}
 	else // not sleep_mode
 	{
-		digitalWrite(A1, HIGH);
+		motor_driver.wake();
 
 		// See if mode change required
 		if (pot < LOW2)
@@ -140,8 +124,8 @@ void loop() {
 			{
 				current_mode = CCW_2;
 				mode_change_required = true;
-				Serial.print(pot);
-				Serial.println("CCW_2");
+//				Serial.print(pot);
+//				Serial.println("CCW_2");
 			}
 		} else if (pot >= LOW2 && pot < LOW1)
 		{
@@ -149,8 +133,8 @@ void loop() {
 			{
 				current_mode = CCW_1;
 				mode_change_required = true;
-				Serial.print(pot);
-				Serial.println("CCW_1");
+//				Serial.print(pot);
+//				Serial.println("CCW_1");
 			}
 		} else if (pot >= LOW2 && pot < HIGH1)
 		{
@@ -158,8 +142,8 @@ void loop() {
 			{
 				current_mode = CW_NORMAL;
 				mode_change_required = true;
-				Serial.print(pot);
-				Serial.println("CW_NORMAL");
+//				Serial.print(pot);
+//				Serial.println("CW_NORMAL");
 			}
 		} else if (pot >= HIGH1 && pot < HIGH2)
 		{
@@ -167,8 +151,8 @@ void loop() {
 			{
 				current_mode = CW_1;
 				mode_change_required = true;
-				Serial.print(pot);
-				Serial.println(" CW_1");
+//				Serial.print(pot);
+//				Serial.println(" CW_1");
 			}
 		} else // pot >= HIGH2
 		{
@@ -176,18 +160,20 @@ void loop() {
 			{
 				current_mode = CW_2;
 				mode_change_required = true;
-				Serial.print(pot);
-				Serial.println("CW_2");
+//				Serial.print(pot);
+//				Serial.println("CW_2");
 			}
 		}
 
 		if (mode_change_required)
 		{
 			motor_driver.stop();
-			motor_driver.init(step_mode(current_mode), step_direction(current_mode));
+			motor_driver.init(
+					step_mode(current_mode),
+					step_direction(current_mode));
 			mode_change_required = false;
 			motor_driver.start(step_period_us(current_mode));
-			Serial.println("Mode Change Complete");
+//			Serial.println("Mode Change Complete");
 		}
 
 		// Step the motor

@@ -1,17 +1,16 @@
 //
 // Created by barry on 10/13/20.
-// Header only class to manage a A4998 stepper driver.
+// Header only class to manage A4998 micro stepping driver.
 //
 // Construct identifying pins wired to Arduino
 //   - must specify STEP pin at a minimum.  All others optional.
 //
-// setStepLevel(level) - LOW to HIGH transition causes one micro step.
-//
-// Object owner can set motor speed by calling singleStep() in a loop with delay() for timing,
-// or control a timed series of pulses with start() and stop().
+// Crude control of motor speed by calling singleStep() in a loop with delay().
+// Better control via timer 1 with start() and stop().
 //   singleStep(width_us) - One pulse HIGH for width_us/2 and LOW for width_us/2.
 //   start(period_us) - Use Timer 1 to send pulses on m_step_pin
 //   stop() - stop sending pulses on m_step_pin
+//   start() and stop() assure that mode changes take place at micro step # 0.
 //
 // setStepMode(1, 2, 4, 8, 16) - Select micro step mode.  1 is Full Steps.
 //
@@ -27,7 +26,7 @@
 //   - Select Vref (volts) = Motor Current Limit (amps) / 2.5
 
 #pragma once
-#include "TimerOne.h" // instantiates at Timer1 object.  f
+#include "TimerOne.h" // instantiates at Timer1 object.
 
 class CA4998
 {
@@ -52,6 +51,8 @@ private: // members
 	int m_sleep_pin;
 	int m_step_pin;
 	int m_dir_pin;
+	volatile int m_micro_step_num;
+	int m_num_steps_current_mode;
 	static CA4998* static_object;
 
 private: // methods
@@ -75,7 +76,9 @@ public: // methods
 			m_m1_pin(pin2_m1), m_m2_pin(pin3_m2), m_m3_pin(pin4_m3),
 			m_reset_pin(pin5_reset),
 			m_enable_pin(pin1_enable),
-			m_sleep_pin(pin6_sleep)
+			m_sleep_pin(pin6_sleep),
+			m_micro_step_num(0),
+			m_num_steps_current_mode(0)
 	{
 		CA4998::static_object = this; // a non c++ target for the timer 1 interrupt
 	}
@@ -106,7 +109,7 @@ public: // methods
 
 	void enable() const { digitalWrite(m_enable_pin, LOW); };
 
-	void setStepMode(StepType step_mode) const // must be set 20ns prior to step()
+	void setStepMode(StepType step_mode)  // must be set 20ns prior to step()
 	{
 		switch(step_mode)
 		{
@@ -114,35 +117,35 @@ public: // methods
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				Serial.println("HALF_STEP Set");
+				m_num_steps_current_mode = 2*4; // *4 to complete a full cycle
 				break;
 
 			case QUARTER_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				Serial.println("QUARTER_STEP Set");
+				m_num_steps_current_mode = 4*4;
 				break;
 
 			case EIGHTH_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				Serial.println("EIGHTH_STEP Set");
+				m_num_steps_current_mode = 8*4;
 				break;
 
 			case SIXTEENTH_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, HIGH);
-				Serial.println("SIXTEENTH_STEP Set");
+				m_num_steps_current_mode = 16*4;
 				break;
 
 			default:  // Full Step
 				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
 				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				Serial.println("FULL_STEP Set");
+				m_num_steps_current_mode = 1*4;
 		}
 
 		// Issue a reset
@@ -155,9 +158,9 @@ public: // methods
 
 	void reset() const {
 		if(m_reset_pin)digitalWrite(m_reset_pin, LOW);
-		delay(10);
+		delayMicroseconds(5);
 		if(m_reset_pin)digitalWrite(m_reset_pin, HIGH);
-		delay(10);
+		delayMicroseconds(5);
 	};
 
 	void sleep() const { if(m_sleep_pin)digitalWrite(m_sleep_pin, LOW); };
@@ -168,6 +171,8 @@ public: // methods
 		digitalWrite(m_step_pin, step_level);
 	};
 
+	// Use this when not using the start() and stop() timer approach.
+	// This does not assure mode changes take place at micro step # 0.
 	void singleStep(unsigned long pulse_width_us = 1000) const {
 
 		unsigned long half_width = pulse_width_us / 2;
@@ -191,13 +196,16 @@ public: // methods
 
 	void stop()
 	{
+		while(m_micro_step_num != 0){};
 		Timer1.stop();
 	}
 };
 
+/// Following static member and methods are per class, and must be defined outside
+/// of class declaration.
 CA4998* CA4998::static_object = nullptr;
 
-// Timer function toggles the pulse input
+// Timer function toggles the step output to the motor
 void CA4998::staticTimerFunc()
 {
 	static bool pulse_level_high = false;
@@ -205,6 +213,12 @@ void CA4998::staticTimerFunc()
 	if(static_object) {
 		digitalWrite(static_object->m_step_pin, pulse_level_high? HIGH : LOW);
 		pulse_level_high = !pulse_level_high;
+
+		// Count pulses to sync mode changes with the starting condition
+		int last_edge = static_object->m_num_steps_current_mode * 2;
+		if (++(static_object->m_micro_step_num) >= last_edge) {
+			static_object->m_micro_step_num = 0;
+		}
 	}
 };
 
