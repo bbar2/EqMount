@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "CA4998.hpp"
+#include "bbLocalLib.hpp"
 
 // Use CA4998.h micro step controller to control a camera mount
 // stepper motor.
@@ -17,28 +18,31 @@ typedef enum {
 	FORWARD_FAST_1,
 	FORWARD_FAST_2
 } OpModeType;
-OpModeType current_mode = FORWARD_NORMAL;
-
-// Joystick levels select OpMode, 0 to 1023 reported by analogRead
-const int POT_NEUTRAL = 485; // as measured
-const int DEAD_BAND  = 30;
-const int POT_LOW_2  = 5;
-const int POT_LOW_1  = POT_NEUTRAL - DEAD_BAND;
-const int POT_HIGH_1 = POT_NEUTRAL + DEAD_BAND;
-const int POT_HIGH_2 = 1020;
+OpModeType current_mode;
 
 // The motor speed of each mode is set by PULSE_US and STEP_MODE
+// 364/365*139*2*200     = 55,447.671 steps per day
+// 55447.67 / (24*60*60) = 0.64176 steps per second
+// For 16 micro step mode: 0.64176 * 16 = 10.268087 micro steps per second
+// or 97,389.1 us per step - round down to 97389
 const int PULSE_NORMAL_US = 97389;
-const int PULSE_FAST1_US = 400;
-const int PULSE_FAST2_US = 50;
+const int PULSE_FAST1_US = 200; // 400 something faster
+const int PULSE_FAST2_US = 50;  // 50 about as fast as I can make it go.
 
+// I tried lower micro step modes for the FAST speeds.  In the end,
+// speed was not limited by pulse rate, and speed changes are more
+// reliable with higher micro stepping.  So I could go either:
+// HALF_STEP at 400us, QUARTER_STEP at 200us, EIGHTH_STEP at 100us,
+// or SIXTEENTH_STEP at 50us.
+// Mode changes add complexity due to the need to stop() for HOME
+// synchronization, so I settled for all SIXTEENTH_STEP modes.
 const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
 const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
 const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
 
 // Assign analog input channels
 const int JOYSTICK_SWITCH = A0; // Analog to use internal pull up.
-const int JOYSTICK_INPUT  = A6;
+const int JOYSTICK_AXIS  = A6;
 
 // Construct the driver object, inputs select DIO channels (or A0-A5)
 CA4998 motor_driver(
@@ -48,6 +52,14 @@ CA4998 motor_driver(
 
 // Convert analog read of potentiometer, to operating mode
 OpModeType selectOpMode(unsigned int input_pot){
+	// Joystick levels select OpMode, 0 to 1023 reported by analogRead
+	const int POT_NEUTRAL = 485; // as measured
+	const int DEAD_BAND  = 30;
+	const int POT_LOW_2  = 5;
+	const int POT_LOW_1  = POT_NEUTRAL - DEAD_BAND;
+	const int POT_HIGH_1 = POT_NEUTRAL + DEAD_BAND;
+	const int POT_HIGH_2 = 1020;
+
 	if (input_pot <= POT_LOW_2) {
 		return(REVERSE_FAST_2);  // pot <= LOW2
 	} else if (input_pot <= POT_LOW_1) {
@@ -61,19 +73,7 @@ OpModeType selectOpMode(unsigned int input_pot){
 	}
 }
 
-// Convert operating mode to motor step period
-unsigned long step_period_us(OpModeType mode)
-{
-	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1){
-		return PULSE_FAST1_US;
-	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
-		return PULSE_FAST2_US;
-	} else {
-		return PULSE_NORMAL_US;
-	}
-}
-
-// Convert operating mode to motor step direction
+// Convert OpModeType to motor step direction
 CA4998::DirectionType step_direction(OpModeType mode) {
 	if (mode == FORWARD_NORMAL || mode == FORWARD_FAST_1 || mode == FORWARD_FAST_2) {
 		return CA4998::CLOCKWISE;
@@ -82,9 +82,21 @@ CA4998::DirectionType step_direction(OpModeType mode) {
 	}
 }
 
-// Convert operating mode to motor controller micro step mode
+// Convert OpModeType to motor step period
+unsigned long step_period_us(OpModeType mode)
+{
+	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1) {
+		return PULSE_FAST1_US;
+	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
+		return PULSE_FAST2_US;
+	} else {
+		return PULSE_NORMAL_US;
+	}
+}
+
+// Convert OpModeType to motor controller micro step mode
 CA4998::StepType step_mode(OpModeType mode) {
-	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1){
+	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1) {
 		return FAST1_STEP_MODE;
 	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
 		return FAST2_STEP_MODE;
@@ -94,12 +106,13 @@ CA4998::StepType step_mode(OpModeType mode) {
 }
 
 void setup() {
-	Serial.begin(9600);
 
 	pinMode(JOYSTICK_SWITCH, INPUT_PULLUP);  // for joystick switch input
+	pinMode(LED_BUILTIN, OUTPUT);
 
-	Serial.print("Neutral Pot = ");
-	Serial.println(analogRead(A6));
+//	Serial.begin(9600);
+//	Serial.print("Neutral Pot = ");
+//	Serial.println(analogRead(A6));
 
 	current_mode = FORWARD_NORMAL;
 	motor_driver.init(
@@ -109,49 +122,30 @@ void setup() {
 }
 
 void loop() {
+	static debounceBool sleep_switch;
 
-	OpModeType next_mode = FORWARD_NORMAL;
-
-	int sleep = analogRead(A0);
-
-	//Debounce the pushbutton
-	static bool sleep_mode = false;
-	const int debounce_ms = 50;
-	static unsigned long push_ms;
-	unsigned long release_ms;
-	static bool push_active = false;
-
-	if(sleep < 500)
-	{
-		push_ms = millis();
-		push_active = true;
-	}
-	else
-	{
-		if(push_active){
-			release_ms=millis();
-			if(release_ms-push_ms > debounce_ms){
-				push_active=false;
-				sleep_mode=!sleep_mode;
-			}
-		}
-	}
+	// JOYSTICK_SWITCH is pulled up internally so it will return
+	// about 1023 when open, and about 0 when closed.
+	bool raw_input = (analogRead(JOYSTICK_SWITCH) < 500);
+	bool sleep_mode = sleep_switch.toggleOnFallingEdge(raw_input);
 
 	if (sleep_mode)
 	{
+		digitalWrite(LED_BUILTIN, LOW);
 		motor_driver.sleep();
 	}
 	else // not sleep_mode
 	{
+		digitalWrite(LED_BUILTIN, HIGH);
 		motor_driver.wake();
 
 		// Select operating mode based on pot position
-		next_mode = selectOpMode(analogRead(JOYSTICK_INPUT));
+		OpModeType next_mode = selectOpMode(analogRead(JOYSTICK_AXIS));
 
-		// change modes
+		// change OpMode
 		if (next_mode != current_mode)
 		{
-			// stop() can be expensive, so only change modes if necessary
+			// stop() can be expensive, so only change step mode if necessary
 			if (step_mode(next_mode) != step_mode(current_mode) )
 			{
 				// waits up to 32 timer 1 pulses, allowing micro stepping

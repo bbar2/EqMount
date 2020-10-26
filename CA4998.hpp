@@ -51,9 +51,9 @@ private: // members
 	int m_sleep_pin;
 	int m_step_pin;
 	int m_dir_pin;
-	volatile int m_micro_step_num;  // volatile because ISR changes it.
+	volatile int m_micro_step_num; // volatile because ISR changes it.
 	int m_num_steps_current_mode;
-	static CA4998* static_object;
+	static CA4998* static_object;  // pointer so static ISR can find this object.
 
 private: // methods
 	void myDelayUs(unsigned long request_delay_us) const {
@@ -68,9 +68,9 @@ public: // methods
 			int pin7_step,    // only pin you must specify
 			int pin8_dir = 0, // floats - must be wired if not assigned to a pin.
 			int pin2_m1 = 0, int pin3_m2 = 0, int pin4_m3 = 0, // pulled LOW internally
-			int pin5_reset  = 0,   // floats - can tie to sleep to pull high
-			int pin6_sleep  = 0,   // pulled HIGH internally.
-    	int pin1_enable = 0) : // pulled LOW internally
+			int pin5_reset  = 0,   // active low: floats - can tie to sleep to pull high
+			int pin6_sleep  = 0,   // active low: pulled HIGH internally.
+    	int pin1_enable = 0) : // active low: pulled LOW internally
 			m_step_pin(pin7_step),
 			m_dir_pin(pin8_dir),
 			m_m1_pin(pin2_m1), m_m2_pin(pin3_m2), m_m3_pin(pin4_m3),

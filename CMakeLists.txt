@@ -9,8 +9,8 @@ set(ARDUINO_CPU atmega328old)
 project(${PROJECT_NAME})
 
 # Define additional source and header files or default arduino sketch files
-set(${PROJECT_NAME}_SRCS eq_mount.cpp TimerOne.cpp)
-set(${PROJECT_NAME}_HDRS CA4998.hpp TimerOne.h)
+set(${PROJECT_NAME}_SRCS eq_mount.cpp TimerOne.cpp bbLocalLib.cpp)
+set(${PROJECT_NAME}_HDRS CA4998.hpp TimerOne.h bbLocalLib.hpp)
 
 ### Additional static libraries to include in the target.
 # set(${PROJECT_NAME}_LIBS)
