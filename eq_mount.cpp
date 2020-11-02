@@ -1,15 +1,17 @@
 #include <Arduino.h>
 #include "CA4998.hpp"
+#include <math.h>
 #include "bbLocalLib.hpp"
 
-// Use CA4998.h micro step controller to control a camera mount
-// stepper motor.
+// Use CA4998.h micro step controller to control a camera mount stepper motor.
+//   - To match star motion, camera should rotate 364/365 revs per 24 hours.
+//   - Motor is NEMA 17, 200step, with 139 to 1 reducer into a 2 to 1 drive gear.
 //   - CA4998.h uses Timer1 to step the motor
 
-// Joystick analog position selects speed and direction.
-//   - NORMAL operation is near neutral position.
+// Joystick Y axis analog position selects speed and direction.
+//   - NORMAL operation is near joystick neutral position.
 //   - moving away from neutral position speeds motor in either direction.
-// Joystick discrete switch toggles lower power sleep mode.
+// Joystick discrete switch toggles low power sleep mode.
 
 typedef enum {
 	REVERSE_FAST_2,
@@ -20,29 +22,43 @@ typedef enum {
 } OpModeType;
 OpModeType current_mode;
 
-// The motor speed of each mode is set by PULSE_US and STEP_MODE
-// 364/365*139*2*200     = 55,447.671 steps per day
-// 55447.67 / (24*60*60) = 0.64176 steps per second
-// For 16 micro step mode: 0.64176 * 16 = 10.268087 micro steps per second
-// or 97,389.1 us per step - round down to 97389
-const int PULSE_NORMAL_US = 97389;
-const int PULSE_FAST1_US = 200; // 400 something faster
-const int PULSE_FAST2_US = 50;  // 50 about as fast as I can make it go.
+// Motor speed of each mode set by PULSE_US and STEP_MODE
+// NORMAL speed needs as many micro steps as possible, so SIXTEENTH_STEP.
+// FAST speeds not limited by pulse rate, and speed changes more reliable
+// with higher micro stepping.  Given the following combinations result
+// in the same motor speed:
+//   HALF_STEP at 400us,    QUARTER_STEP at 200us,
+//   EIGHTH_STEP at 100us,  or SIXTEENTH_STEP at 50us;
+// and mode changes add complexity due to the need to stop() for HOME
+// synchronization, I selected all SIXTEENTH_STEP modes.
+static const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
+static const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
+static const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
 
-// I tried lower micro step modes for the FAST speeds.  In the end,
-// speed was not limited by pulse rate, and speed changes are more
-// reliable with higher micro stepping.  So I could go either:
-// HALF_STEP at 400us, QUARTER_STEP at 200us, EIGHTH_STEP at 100us,
-// or SIXTEENTH_STEP at 50us.
-// Mode changes add complexity due to the need to stop() for HOME
-// synchronization, so I settled for all SIXTEENTH_STEP modes.
-const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
-const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
-const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
+// Normal pulse rate is dependent on target speed and NORMAL_STEP_MODE.
+static const double TARGET_REVS_PER_DAY = 364.0/365.0;
+static const double STEPS_PER_DAY = TARGET_REVS_PER_DAY * 200.0 * 139.0 * 2.0; // 55,447.6
+static const double STEPS_PER_SEC = STEPS_PER_DAY / (24.0 * 60.0 * 60.0);   // 0.642
+static const double MICRO_STEPS_PER_SEC = NORMAL_STEP_MODE * STEPS_PER_SEC; // 10.27
+
+// FAST modes are limited by how fast the motor can turn.
+// Theoretical max is 600 to 1500 RPM: function of acceleration, controller, and voltage
+// Arduino Nano Timer 1 ISR min pulse width is ~20us, which limits it to 937 RPM max.
+static const double FAST1_TARGET_RPM = 350; //100.0;
+static const double FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0 / 60.0;
+static const double FAST1_MICRO_STEPS_PER_SEC = FAST1_STEPS_PER_SEC * FAST1_STEP_MODE;
+
+static const double FAST2_TARGET_RPM = 550; //375.0; // Most I could reliably achieve
+static const double FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0 / 60.0;
+static const double FAST2_MICRO_STEPS_PER_SEC = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
+
+static const uint32_t PULSE_NORMAL_US = (lround)(1E06 / MICRO_STEPS_PER_SEC); // 97,389
+static const uint32_t PULSE_FAST1_US = (lround)(1E06 / FAST1_MICRO_STEPS_PER_SEC);
+static const uint32_t PULSE_FAST2_US = (lround)(1E06 / FAST2_MICRO_STEPS_PER_SEC);
 
 // Assign analog input channels
-const int JOYSTICK_SWITCH = A0; // Analog to use internal pull up.
-const int JOYSTICK_AXIS  = A6;
+static const int JOYSTICK_SWITCH = A0; // Analog to use internal pull up.
+static const int JOYSTICK_AXIS   = A6;
 
 // Construct the driver object, inputs select DIO channels (or A0-A5)
 CA4998 motor_driver(
@@ -54,11 +70,11 @@ CA4998 motor_driver(
 OpModeType selectOpMode(unsigned int input_pot){
 	// Joystick levels select OpMode, 0 to 1023 reported by analogRead
 	const int POT_NEUTRAL = 485; // as measured
-	const int DEAD_BAND  = 30;
-	const int POT_LOW_2  = 5;
-	const int POT_LOW_1  = POT_NEUTRAL - DEAD_BAND;
-	const int POT_HIGH_1 = POT_NEUTRAL + DEAD_BAND;
-	const int POT_HIGH_2 = 1020;
+	const int DEAD_BAND   = 30;
+	const int POT_LOW_2   = 5;
+	const int POT_LOW_1   = POT_NEUTRAL - DEAD_BAND;
+	const int POT_HIGH_1  = POT_NEUTRAL + DEAD_BAND;
+	const int POT_HIGH_2  = 1020;
 
 	if (input_pot <= POT_LOW_2) {
 		return(REVERSE_FAST_2);  // pot <= LOW2
@@ -75,10 +91,13 @@ OpModeType selectOpMode(unsigned int input_pot){
 
 // Convert OpModeType to motor step direction
 CA4998::DirectionType step_direction(OpModeType mode) {
+	// Looking up at sky: stars rotate counter clockwise around north star
+	// Looking down at shaft: rotate clockwise, so looking up matches sky
+	// Looking down at motor: rotate counter clock, since geared opposite shaft
 	if (mode == FORWARD_NORMAL || mode == FORWARD_FAST_1 || mode == FORWARD_FAST_2) {
-		return CA4998::CLOCKWISE;
-	} else {
 		return CA4998::COUNTER_CLOCK;
+	} else {
+		return CA4998::CLOCKWISE;
 	}
 }
 
@@ -110,19 +129,46 @@ void setup() {
 	pinMode(JOYSTICK_SWITCH, INPUT_PULLUP);  // for joystick switch input
 	pinMode(LED_BUILTIN, OUTPUT);
 
-//	Serial.begin(9600);
-//	Serial.print("Neutral Pot = ");
-//	Serial.println(analogRead(A6));
+	#if 1
+	Serial.begin(9600);
+	Serial.print("Neutral Pot = ");
+	Serial.println(analogRead(A6));
+
+	Serial.print("PULSE_NORMAL_US = ");
+	Serial.print(PULSE_NORMAL_US);
+	Serial.print(" x:");
+	Serial.println(NORMAL_STEP_MODE);
+
+	Serial.print("PULSE_FAST1_US = ");
+	Serial.print(PULSE_FAST1_US);
+	Serial.print(" x:");
+	Serial.println(FAST1_STEP_MODE);
+
+	Serial.print("PULSE_FAST2_US = ");
+	Serial.print(PULSE_FAST2_US);
+	Serial.print(" x:");
+	Serial.println(FAST2_STEP_MODE);
+	delay(1000);
+	#endif
 
 	current_mode = FORWARD_NORMAL;
 	motor_driver.init(
 			step_mode(current_mode),
 			step_direction(current_mode));
 	motor_driver.start(step_period_us(current_mode));
+	pinMode(2,OUTPUT);
 }
 
 void loop() {
+#if 0
+	static bool test = true;
+	digitalWrite(2, test?HIGH:LOW);
+	test = !test;
+	return;
+#else
+
 	static debounceBool sleep_switch;
+	static bool timer_running = true;
 
 	// JOYSTICK_SWITCH is pulled up internally so it will return
 	// about 1023 when open, and about 0 when closed.
@@ -131,13 +177,21 @@ void loop() {
 
 	if (sleep_mode)
 	{
-		digitalWrite(LED_BUILTIN, LOW);
-		motor_driver.sleep();
+		if (timer_running) {
+			motor_driver.stop();
+			timer_running = false;
+			digitalWrite(LED_BUILTIN, HIGH);
+			motor_driver.sleep();
+		};
 	}
 	else // not sleep_mode
 	{
-		digitalWrite(LED_BUILTIN, HIGH);
-		motor_driver.wake();
+		if (!timer_running){
+			motor_driver.start(step_period_us(current_mode));
+			timer_running = true;
+			digitalWrite(LED_BUILTIN, LOW);
+			motor_driver.wake();
+		}
 
 		// Select operating mode based on pot position
 		OpModeType next_mode = selectOpMode(analogRead(JOYSTICK_AXIS));
@@ -159,6 +213,7 @@ void loop() {
 			current_mode = next_mode;
 		}
 
-	} // not sleep_mode
+	} // end not sleep_mode
+#endif
 }
 

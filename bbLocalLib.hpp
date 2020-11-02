@@ -52,4 +52,3 @@ public: // methods
 };
 
 
-/// My delay function that combines delay and delayMicros

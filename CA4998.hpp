@@ -32,7 +32,7 @@ class CA4998
 {
 public: // members
 	typedef enum {
-		CLOCKWISE     = HIGH,
+		CLOCKWISE     = HIGH, // Rotation of gear, looking at top of motor shaft.
 		COUNTER_CLOCK = LOW
 	} DirectionType;
 
@@ -56,9 +56,10 @@ private: // members
 	static CA4998* static_object;  // pointer so static ISR can find this object.
 
 private: // methods
-	void myDelayUs(unsigned long request_delay_us) const {
-		unsigned long delay_us = request_delay_us % 1000;
-		unsigned long delay_ms = request_delay_us / 1000;
+  /// My delay function that combines delay and delayMicros
+	void myDelayUs(uint32_t request_delay_us) const {
+	  uint32_t delay_us = request_delay_us % 1000;
+	  uint32_t delay_ms = request_delay_us / 1000;
 		if (delay_us) delayMicroseconds(delay_us);
 		if (delay_ms) delay(delay_ms);
 	}
@@ -112,7 +113,7 @@ public: // methods
 
 	void enable() const { digitalWrite(m_enable_pin, LOW); };
 
-	void setStepMode(StepType step_mode)  // must be set 20ns prior to step()
+	void setStepMode(StepType step_mode)  // must be set 20ns before (& held 20ns after) step()
 	{
 		switch(step_mode)
 		{
@@ -176,7 +177,7 @@ public: // methods
 
 	// Use this when not using the start() and stop() timer approach.
 	// This does not assure mode changes take place at micro step # 0.
-	void singleStep(unsigned long pulse_width_us = 1000) const {
+	void singleStep(uint32_t pulse_width_us = 1000) const {
 
 		unsigned long half_width = pulse_width_us / 2;
 
@@ -189,7 +190,7 @@ public: // methods
 	// Timer function toggles the pulse input
 	static void staticTimerFunc();
 
-	void start(unsigned long period_us)
+	void start(uint32_t period_us)
 	{
 		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
 		Timer1.initialize(period_us/2);
