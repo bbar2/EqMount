@@ -123,7 +123,6 @@ CA4998::StepType step_mode(OpModeType mode) {
 		return NORMAL_STEP_MODE;
 	}
 }
-//#define MAX_PULSE_TEST
 
 void setup() {
 
@@ -154,25 +153,14 @@ void setup() {
 
 	current_mode = FORWARD_NORMAL;
 
-	#ifdef MAX_PULSE_TEST
-	pinMode(2, OUTPUT);
-	#else
 	motor_driver.init(
 			step_mode(current_mode),
 			step_direction(current_mode));
 
 	motor_driver.start(step_period_us(current_mode));
-	#endif
 }
 
 void loop() {
-#ifdef MAX_PULSE_TEST
-	static bool test = true;
-	digitalWrite(2, test?HIGH:LOW);
-	test = !test;
-	return;
-#else
-
 	static debounceBool sleep_switch;
 	static bool timer_running = true;
 
@@ -188,7 +176,7 @@ void loop() {
 			timer_running = false;
 			digitalWrite(LED_BUILTIN, HIGH);
 			motor_driver.sleep();
-		};
+		}
 	}
 	else // not sleep_mode
 	{
@@ -220,6 +208,5 @@ void loop() {
 		}
 
 	} // end not sleep_mode
-#endif
 }
 

@@ -36,9 +36,15 @@ set(${PROJECT_NAME}_PROGRAMMER avrispmkii)
 # arduino builds on the Apple system, will be under /Users path
 # Check path, to select development system dependent settings
 if(CMAKE_CURRENT_SOURCE_DIR MATCHES "/home/")
-    # See documentation for udevadm and /etc/udev/rules.d/10-usb-serial.rules contents:
-    #   SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyNano"
-set(${PROJECT_NAME}_PORT /dev/ttyACM1)
+  # See documentation for udevadm and /etc/udev/rules.d/10-usb-serial.rules contents:
+  # -For Nano:
+  #   SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyArduino"
+  # -For Uno:
+  #   SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", SYMLINK+="ttyArduino"
+  # -I include them all so whatever is plugged in will be known as ttyArduino.
+  # -To find idVendor and IDProduct values, plug in arduino, determine which port it's on, then:
+  #    udevadm info -a -n /dev/ttyPort {e.g. ttyPort = ttyACM0 or ttyACM1}
+set(${PROJECT_NAME}_PORT /dev/ttyArduino)
 else()
 set(${PROJECT_NAME}_PORT /dev/cu.usbserial-141310)
 endif()
