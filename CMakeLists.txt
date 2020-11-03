@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 2.8.4)
 set(CMAKE_TOOLCHAIN_FILE ${CMAKE_SOURCE_DIR}/cmake/ArduinoToolchain.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
 set(PROJECT_NAME EqMount)
 
-set(${PROJECT_NAME}_BOARD nano)
-set(ARDUINO_CPU atmega328old)
+set(${PROJECT_NAME}_BOARD uno)
+# set(ARDUINO_CPU)
 project(${PROJECT_NAME})
 
 # Define additional source and header files or default arduino sketch files
@@ -16,7 +16,7 @@ set(${PROJECT_NAME}_HDRS CA4998.hpp TimerOne.h bbLocalLib.hpp)
 # set(${PROJECT_NAME}_LIBS)
 
 ### Main sketch file
-# set(${PROJECT_NAME}_SKETCH eq_mount.ino)
+# set(${PROJECT_NAME}_SKETCH EqMount.ino)
 
 ### Add project directories into the build
 # add_subdirectory()
@@ -38,12 +38,12 @@ set(${PROJECT_NAME}_PROGRAMMER avrispmkii)
 if(CMAKE_CURRENT_SOURCE_DIR MATCHES "/home/")
     # See documentation for udevadm and /etc/udev/rules.d/10-usb-serial.rules contents:
     #   SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="ttyNano"
-    set(${PROJECT_NAME}_PORT /dev/ttyNano)
+set(${PROJECT_NAME}_PORT /dev/ttyACM1)
 else()
-    set(${PROJECT_NAME}_PORT /dev/cu.usbserial-141310)
+set(${PROJECT_NAME}_PORT /dev/cu.usbserial-141310)
 endif()
 
-# set(nano.upload.speed 9600)
+# set(uno.upload.speed 9600)
 
 ## Verbose build process
 set(${PROJECT_NAME}_AFLAGS -v)

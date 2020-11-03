@@ -42,13 +42,13 @@ static const double STEPS_PER_SEC = STEPS_PER_DAY / (24.0 * 60.0 * 60.0);   // 0
 static const double MICRO_STEPS_PER_SEC = NORMAL_STEP_MODE * STEPS_PER_SEC; // 10.27
 
 // FAST modes are limited by how fast the motor can turn.
-// Theoretical max is 600 to 1500 RPM: function of acceleration, controller, and voltage
-// Arduino Nano Timer 1 ISR min pulse width is ~20us, which limits it to 937 RPM max.
+// Theoretical NEMA 17 max: 600-1500 RPM: function of accel, controller, and voltage
+// Arduino Nano timer ISR min pulse width is ~20us, which limits max RPM to ~937
 static const double FAST1_TARGET_RPM = 350; //100.0;
 static const double FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0 / 60.0;
 static const double FAST1_MICRO_STEPS_PER_SEC = FAST1_STEPS_PER_SEC * FAST1_STEP_MODE;
 
-static const double FAST2_TARGET_RPM = 550; //375.0; // Most I could reliably achieve
+static const double FAST2_TARGET_RPM = 500; //375.0;
 static const double FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0 / 60.0;
 static const double FAST2_MICRO_STEPS_PER_SEC = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
 
@@ -57,14 +57,14 @@ static const uint32_t PULSE_FAST1_US = (lround)(1E06 / FAST1_MICRO_STEPS_PER_SEC
 static const uint32_t PULSE_FAST2_US = (lround)(1E06 / FAST2_MICRO_STEPS_PER_SEC);
 
 // Assign analog input channels
-static const int JOYSTICK_SWITCH = A0; // Analog to use internal pull up.
-static const int JOYSTICK_AXIS   = A6;
+static const int JOYSTICK_SWITCH = A2; // Analog to use internal pull up.
+static const int JOYSTICK_AXIS   = A1;
 
 // Construct the driver object, inputs select DIO channels (or A0-A5)
 CA4998 motor_driver(
-		4, 5,            // pin7_step, pin8_dir
-		6, 7, 8, // pin2_m1, pin3_m2, pin4_m3
-		9, A1);                 // pin5_reset, pin6_sleep
+		11, 12,                 // pin7_step, pin8_dir
+		6, 7, 8,        // pin2_m1, pin3_m2, pin4_m3
+		9, 10, 5); // pin5_reset, pin6_sleep, pin1_enable
 
 // Convert analog read of potentiometer, to operating mode
 OpModeType selectOpMode(unsigned int input_pot){
@@ -123,6 +123,7 @@ CA4998::StepType step_mode(OpModeType mode) {
 		return NORMAL_STEP_MODE;
 	}
 }
+//#define MAX_PULSE_TEST
 
 void setup() {
 
@@ -152,15 +153,20 @@ void setup() {
 	#endif
 
 	current_mode = FORWARD_NORMAL;
+
+	#ifdef MAX_PULSE_TEST
+	pinMode(2, OUTPUT);
+	#else
 	motor_driver.init(
 			step_mode(current_mode),
 			step_direction(current_mode));
+
 	motor_driver.start(step_period_us(current_mode));
-	pinMode(2,OUTPUT);
+	#endif
 }
 
 void loop() {
-#if 0
+#ifdef MAX_PULSE_TEST
 	static bool test = true;
 	digitalWrite(2, test?HIGH:LOW);
 	test = !test;
