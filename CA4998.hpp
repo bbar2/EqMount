@@ -259,9 +259,6 @@ void CA4998::staticTimerFunc()
 
 				// limit acceleration
 				int32_t change = (current_period_us-target_period_us) / 4;
-				if (labs(change) > 10000) {
-					change = labs(change)/change * 10000;
-				}
 				if (change != 0) {
 					next_period_us = current_period_us - change;
 				} else {
