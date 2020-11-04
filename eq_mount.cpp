@@ -24,7 +24,8 @@ OpModeType current_mode;
 
 // Motor speed of each mode set by PULSE_US and STEP_MODE
 // NORMAL speed needs as many micro steps as possible, so SIXTEENTH_STEP.
-// FAST speeds not limited by pulse rate, and speed changes more reliable
+// FAST speeds up to 1000 RPM are limited by acceleration.
+// Pulse rate at SIXTEENTH_STEP limits RPM to about 500 RPM. not limited by pulse rate, and speed changes more reliable
 // with higher micro stepping.  Given the following combinations result
 // in the same motor speed:
 //   HALF_STEP at 400us,    QUARTER_STEP at 200us,
@@ -43,8 +44,9 @@ static const double MICRO_STEPS_PER_SEC = NORMAL_STEP_MODE * STEPS_PER_SEC; // 1
 
 // FAST modes are limited by how fast the motor can turn.
 // Theoretical NEMA 17 max: 600-1500 RPM: function of accel, controller, and voltage
-// Arduino Nano timer ISR min pulse width is ~20us, which limits max RPM to ~937
-static const double FAST1_TARGET_RPM = 350; //100.0;
+// Arduino Nano timer ISR min pulse width ~20us, limiting max SIXTEENTH_STEP RPM to ~468
+// With QUARTER_STEP and acceleration limits I can get 1000 RPM.
+static const double FAST1_TARGET_RPM = 200.0; //350; //100.0;
 static const double FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0 / 60.0;
 static const double FAST1_MICRO_STEPS_PER_SEC = FAST1_STEPS_PER_SEC * FAST1_STEP_MODE;
 
@@ -196,14 +198,18 @@ void loop() {
 			// stop() can be expensive, so only change step mode if necessary
 			if (step_mode(next_mode) != step_mode(current_mode) )
 			{
+				Serial.println("THE SLOW ONE");
 				// waits up to 32 timer 1 pulses, allowing micro stepping
 				// driver state to return to HOME position
 				motor_driver.stop();
 				// Only change modes in HOME position
 				motor_driver.setStepMode(step_mode(next_mode));
+				motor_driver.start(step_period_us(next_mode));
 			}
+			Serial.print("The Quick One: Current Timer Period = ");
+			Serial.println(motor_driver.getTimerPeriod());
 			motor_driver.setDirection(step_direction(next_mode));
-			motor_driver.start(step_period_us(next_mode));
+			motor_driver.changePeriod(step_period_us(next_mode));
 			current_mode = next_mode;
 		}
 

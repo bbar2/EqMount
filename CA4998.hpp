@@ -54,9 +54,13 @@ private: // members
 	volatile int m_micro_step_num; // volatile because ISR changes it.
 	int m_num_steps_current_mode;
 	static CA4998* static_object;  // pointer so static ISR can find this object.
+	volatile int32_t m_timer_current_period_us; // volatile because ISR changes it.
+	int32_t m_timer_target_period_us;
+	volatile int32_t m_last_change_ms;
+	int32_t m_step_size_us;
 
 private: // methods
-  /// My delay function that combines delay and delayMicros
+  /// My delay function that combines delay and delayMicros - TODO move to bbLocalLib
 	void myDelayUs(uint32_t request_delay_us) const {
 	  uint32_t delay_us = request_delay_us % 1000;
 	  uint32_t delay_ms = request_delay_us / 1000;
@@ -79,10 +83,15 @@ public: // methods
 			m_sleep_pin(pin6_sleep),
 			m_enable_pin(pin1_enable),
 			m_micro_step_num(0),
-			m_num_steps_current_mode(0)
+			m_num_steps_current_mode(0),
+			m_timer_current_period_us(0),
+			m_timer_target_period_us(0),
+			m_last_change_ms(0),
+			m_step_size_us(0)
 	{
 		CA4998::static_object = this; // a non c++ target for the timer 1 interrupt
 	}
+	[[nodiscard]] uint32_t getTimerPeriod() const {return m_timer_current_period_us;};
 
 	void init(StepType initial_step_mode = FULL_STEP,
 					 DirectionType start_dir = CLOCKWISE) {
@@ -190,11 +199,25 @@ public: // methods
 	// Timer function toggles the pulse input
 	static void staticTimerFunc();
 
-	void start(uint32_t period_us)
+	void start(uint32_t pulse_period_us)
 	{
 		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
-		Timer1.initialize(period_us/2);
+		m_timer_target_period_us = pulse_period_us / 2;
+		m_timer_current_period_us = m_timer_target_period_us; // no ramping - just do it
+		Timer1.initialize(m_timer_target_period_us);
 		Timer1.start();
+		m_last_change_ms = millis();
+	}
+
+	void changePeriod(uint32_t new_pulse_period_us)
+	{
+		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
+		m_timer_target_period_us = new_pulse_period_us / 2;
+		if (m_timer_current_period_us > m_timer_target_period_us){
+			m_step_size_us = (m_timer_current_period_us - m_timer_target_period_us) / 20;
+		} else {
+			m_step_size_us = (m_timer_target_period_us - m_timer_current_period_us) / 20;
+		}
 	}
 
 	void stop()
@@ -222,6 +245,36 @@ void CA4998::staticTimerFunc()
 		int last_edge = static_object->m_num_steps_current_mode * 2;
 		if (++(static_object->m_micro_step_num) >= last_edge) {
 			static_object->m_micro_step_num = 0;
+		}
+
+		// Accelerate to target pulse period
+		int32_t target_period_us = static_object->m_timer_target_period_us;
+		int32_t current_period_us = static_object->m_timer_current_period_us;
+		if (current_period_us != target_period_us) {
+			int32_t current_time_ms = millis();
+			if (current_time_ms - static_object->m_last_change_ms > 50)
+			{
+				digitalWrite(LED_BUILTIN, HIGH);
+				int32_t next_period_us = 0;
+
+				// limit acceleration
+				int32_t change = (current_period_us-target_period_us) / 4;
+				if (labs(change) > 10000) {
+					change = labs(change)/change * 10000;
+				}
+				if (change != 0) {
+					next_period_us = current_period_us - change;
+				} else {
+					next_period_us = target_period_us;
+				}
+				Timer1.initialize(next_period_us);
+				Timer1.start();
+				static_object->m_timer_current_period_us = next_period_us;
+				static_object->m_last_change_ms = current_time_ms;
+				if (next_period_us == target_period_us) {
+					digitalWrite(LED_BUILTIN, LOW);
+				}
+			}
 		}
 	}
 };
