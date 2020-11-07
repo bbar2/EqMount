@@ -34,29 +34,25 @@ OpModeType current_mode;
 // synchronization, I selected all SIXTEENTH_STEP modes.
 static const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
 static const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
-static const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
+static const CA4998::StepType FAST2_STEP_MODE  = CA4998::EIGHTH_STEP;
 
 // Normal pulse rate is dependent on target speed and NORMAL_STEP_MODE.
-static const double TARGET_REVS_PER_DAY = 364.0/365.0;
-static const double STEPS_PER_DAY = TARGET_REVS_PER_DAY * 200.0 * 139.0 * 2.0; // 55,447.6
-static const double STEPS_PER_SEC = STEPS_PER_DAY / (24.0 * 60.0 * 60.0);   // 0.642
-static const double MICRO_STEPS_PER_SEC = NORMAL_STEP_MODE * STEPS_PER_SEC; // 10.27
+static const float TARGET_REVS_PER_DAY = 364.0/365.0;
+static const float STEPS_PER_DAY = TARGET_REVS_PER_DAY * 200.0 * 139.0 * 2.0; // 55,447.6
+static const float STEPS_PER_SEC = STEPS_PER_DAY / (24.0 * 60.0 * 60.0);   // 0.642
+static const float NORMAL_PPS = NORMAL_STEP_MODE * STEPS_PER_SEC; // 10.27
 
 // FAST modes are limited by how fast the motor can turn.
 // Theoretical NEMA 17 max: 600-1500 RPM: function of accel, controller, and voltage
 // Arduino Nano timer ISR min pulse width ~20us, limiting max SIXTEENTH_STEP RPM to ~468
 // With QUARTER_STEP and acceleration limits I can get 1000 RPM.
-static const double FAST1_TARGET_RPM = 200.0; //350; //100.0;
-static const double FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0 / 60.0;
-static const double FAST1_MICRO_STEPS_PER_SEC = FAST1_STEPS_PER_SEC * FAST1_STEP_MODE;
+static const float FAST1_TARGET_RPM = 200.0; //350; //100.0;
+static const float FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0 / 60.0;
+static const float FAST1_PPS = FAST1_STEPS_PER_SEC * FAST1_STEP_MODE;
 
-static const double FAST2_TARGET_RPM = 500; //375.0;
-static const double FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0 / 60.0;
-static const double FAST2_MICRO_STEPS_PER_SEC = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
-
-static const uint32_t PULSE_NORMAL_US = (lround)(1E06 / MICRO_STEPS_PER_SEC); // 97,389
-static const uint32_t PULSE_FAST1_US = (lround)(1E06 / FAST1_MICRO_STEPS_PER_SEC);
-static const uint32_t PULSE_FAST2_US = (lround)(1E06 / FAST2_MICRO_STEPS_PER_SEC);
+static const float FAST2_TARGET_RPM = 800; //375.0;
+static const float FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0 / 60.0;
+static const float FAST2_PPS = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
 
 // Assign analog input channels
 static const int JOYSTICK_SWITCH = A2; // Analog to use internal pull up.
@@ -104,14 +100,14 @@ CA4998::DirectionType step_direction(OpModeType mode) {
 }
 
 // Convert OpModeType to motor step period
-unsigned long step_period_us(OpModeType mode)
+float step_pps(OpModeType mode)
 {
 	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1) {
-		return PULSE_FAST1_US;
+		return FAST1_PPS;
 	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
-		return PULSE_FAST2_US;
+		return FAST2_PPS;
 	} else {
-		return PULSE_NORMAL_US;
+		return NORMAL_PPS;
 	}
 }
 
@@ -136,18 +132,18 @@ void setup() {
 	Serial.print("Neutral Pot = ");
 	Serial.println(analogRead(A6));
 
-	Serial.print("PULSE_NORMAL_US = ");
-	Serial.print(PULSE_NORMAL_US);
+	Serial.print("NORMAL_PPS = ");
+	Serial.print(NORMAL_PPS);
 	Serial.print(" x:");
 	Serial.println(NORMAL_STEP_MODE);
 
-	Serial.print("PULSE_FAST1_US = ");
-	Serial.print(PULSE_FAST1_US);
+	Serial.print("FAST1_PPS = ");
+	Serial.print(FAST1_PPS);
 	Serial.print(" x:");
 	Serial.println(FAST1_STEP_MODE);
 
-	Serial.print("PULSE_FAST2_US = ");
-	Serial.print(PULSE_FAST2_US);
+	Serial.print("FAST2_PPS = ");
+	Serial.print(FAST2_PPS);
 	Serial.print(" x:");
 	Serial.println(FAST2_STEP_MODE);
 	delay(1000);
@@ -159,7 +155,7 @@ void setup() {
 			step_mode(current_mode),
 			step_direction(current_mode));
 
-	motor_driver.start(step_period_us(current_mode));
+	motor_driver.start(step_pps(current_mode));
 }
 
 void loop() {
@@ -183,7 +179,7 @@ void loop() {
 	else // not sleep_mode
 	{
 		if (!timer_running){
-			motor_driver.start(step_period_us(current_mode));
+			motor_driver.start(step_pps(current_mode));
 			timer_running = true;
 			digitalWrite(LED_BUILTIN, LOW);
 			motor_driver.wake();
@@ -201,16 +197,24 @@ void loop() {
 				Serial.println("THE SLOW ONE");
 				// waits up to 32 timer 1 pulses, allowing micro stepping
 				// driver state to return to HOME position
-				motor_driver.stop();
 				// Only change modes in HOME position
 				motor_driver.setStepMode(step_mode(next_mode));
-				motor_driver.start(step_period_us(next_mode));
 			}
 			Serial.print("The Quick One: Current Timer Period = ");
-			Serial.println(motor_driver.getTimerPeriod());
+			Serial.println(motor_driver.currentPPS());
 			motor_driver.setDirection(step_direction(next_mode));
-			motor_driver.changePeriod(step_period_us(next_mode));
+			motor_driver.changePPS(step_pps(next_mode));
 			current_mode = next_mode;
+		} else
+		{
+			uint32_t milli = millis();
+			static uint32_t last_milli = 0;
+			if (milli - last_milli > 1000)
+			{
+				Serial.print("Current Timer Period = ");
+				Serial.println(motor_driver.currentPPS());
+				last_milli = milli;
+			}
 		}
 
 	} // end not sleep_mode

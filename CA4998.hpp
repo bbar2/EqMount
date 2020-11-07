@@ -8,11 +8,13 @@
 // Crude control of motor speed by calling singleStep() in a loop with delay().
 // Better control via timer 1 with start() and stop().
 //   singleStep(width_us) - One pulse HIGH for width_us/2 and LOW for width_us/2.
-//   start(period_us) - Use Timer 1 to send pulses on m_step_pin
+//   start(pulse_per_sec) - Use Timer 1 to send pulses on m_step_pin
+//   changePPS(new_pps) - updates pps for alrady started timer.
 //   stop() - stop sending pulses on m_step_pin
-//   start() and stop() assure that mode changes take place at micro step # 0.
 //
 // setStepMode(1, 2, 4, 8, 16) - Select micro step mode.  1 is Full Steps.
+//   Assures that mode changes take place at micro step # 0.
+//   Issues a reset to the controller.
 //
 // sleep() if motor not in use, to minimize power.  Else set to wake();
 //
@@ -52,16 +54,15 @@ private: // members
 	int m_step_pin;
 	int m_dir_pin;
 	volatile int m_micro_step_num; // volatile because ISR changes it.
-	int m_num_steps_current_mode;
+	int m_steps_in_current_mode;
+	float m_target_pps;
+	volatile float m_current_pps; // volatile because ISR changes it.
+	volatile int32_t m_last_accel_ms;
 	static CA4998* static_object;  // pointer so static ISR can find this object.
-	volatile int32_t m_timer_current_period_us; // volatile because ISR changes it.
-	int32_t m_timer_target_period_us;
-	volatile int32_t m_last_change_ms;
-	int32_t m_step_size_us;
 
 private: // methods
   /// My delay function that combines delay and delayMicros - TODO move to bbLocalLib
-	void myDelayUs(uint32_t request_delay_us) const {
+	static void myDelayUs(uint32_t request_delay_us) {
 	  uint32_t delay_us = request_delay_us % 1000;
 	  uint32_t delay_ms = request_delay_us / 1000;
 		if (delay_us) delayMicroseconds(delay_us);
@@ -83,15 +84,13 @@ public: // methods
 			m_sleep_pin(pin6_sleep),
 			m_enable_pin(pin1_enable),
 			m_micro_step_num(0),
-			m_num_steps_current_mode(0),
-			m_timer_current_period_us(0),
-			m_timer_target_period_us(0),
-			m_last_change_ms(0),
-			m_step_size_us(0)
+			m_steps_in_current_mode(0),
+			m_target_pps(0),
+			m_current_pps(0),
+			m_last_accel_ms(0)
 	{
 		CA4998::static_object = this; // a non c++ target for the timer 1 interrupt
 	}
-	[[nodiscard]] uint32_t getTimerPeriod() const {return m_timer_current_period_us;};
 
 	void init(StepType initial_step_mode = FULL_STEP,
 					 DirectionType start_dir = CLOCKWISE) {
@@ -118,47 +117,53 @@ public: // methods
 		Timer1.attachInterrupt(CA4998::staticTimerFunc);
 	};
 
+	float currentPPS() const {return m_current_pps;};
+
 	void disable() const { digitalWrite(m_enable_pin, HIGH); };
 
 	void enable() const { digitalWrite(m_enable_pin, LOW); };
 
 	void setStepMode(StepType step_mode)  // must be set 20ns before (& held 20ns after) step()
 	{
+		// Only change modes from HOME position - i.e. every 4 complete full steps
+		// If you've done a random stop, and then call this, you will get hung up here.
+		while(m_micro_step_num != 0){};
+
 		switch(step_mode)
 		{
 			case HALF_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_num_steps_current_mode = 2*4; // *4 to complete a full cycle back to HOME state
+				m_steps_in_current_mode = 2 * 4; // *4 to complete a full cycle back to HOME state
 				break;
 
 			case QUARTER_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_num_steps_current_mode = 4*4;
+				m_steps_in_current_mode = 4 * 4;
 				break;
 
 			case EIGHTH_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_num_steps_current_mode = 8*4;
+				m_steps_in_current_mode = 8 * 4;
 				break;
 
 			case SIXTEENTH_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, HIGH);
-				m_num_steps_current_mode = 16*4;
+				m_steps_in_current_mode = 16 * 4;
 				break;
 
 			default:  // Full Step
 				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
 				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_num_steps_current_mode = 1*4;
+				m_steps_in_current_mode = 1 * 4;
 		}
 
 		// Issue a reset
@@ -171,9 +176,9 @@ public: // methods
 
 	void reset() const {
 		if(m_reset_pin)digitalWrite(m_reset_pin, LOW);
-		delayMicroseconds(5);
+		delayMicroseconds(2);
 		if(m_reset_pin)digitalWrite(m_reset_pin, HIGH);
-		delayMicroseconds(5);
+		delayMicroseconds(2);
 	};
 
 	void sleep() const { if(m_sleep_pin)digitalWrite(m_sleep_pin, LOW); };
@@ -186,9 +191,9 @@ public: // methods
 
 	// Use this when not using the start() and stop() timer approach.
 	// This does not assure mode changes take place at micro step # 0.
-	void singleStep(uint32_t pulse_width_us = 1000) const {
+	void singleStep(uint32_t pulse_width_us = 200) const {
 
-		unsigned long half_width = pulse_width_us / 2;
+		uint32_t half_width = pulse_width_us / 2;
 
 		digitalWrite(m_step_pin, HIGH);
 		myDelayUs(half_width);
@@ -199,31 +204,24 @@ public: // methods
 	// Timer function toggles the pulse input
 	static void staticTimerFunc();
 
-	void start(uint32_t pulse_period_us)
+	void start(float pps)
 	{
 		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
-		m_timer_target_period_us = pulse_period_us / 2;
-		m_timer_current_period_us = m_timer_target_period_us; // no ramping - just do it
-		Timer1.initialize(m_timer_target_period_us);
+		m_target_pps = pps;
+		m_current_pps = pps;
+		uint32_t half_period_us = (1e6/2) / pps;
+		Timer1.initialize(half_period_us);
 		Timer1.start();
-		m_last_change_ms = millis();
+		m_last_accel_ms = millis();
 	}
 
-	void changePeriod(uint32_t new_pulse_period_us)
+	void changePPS(float new_pps)
 	{
-		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
-		m_timer_target_period_us = new_pulse_period_us / 2;
-		if (m_timer_current_period_us > m_timer_target_period_us){
-			m_step_size_us = (m_timer_current_period_us - m_timer_target_period_us) / 20;
-		} else {
-			m_step_size_us = (m_timer_target_period_us - m_timer_current_period_us) / 20;
-		}
+		m_target_pps = new_pps;
 	}
 
 	void stop()
 	{
-		// Wait for controller to return to HOME state
-		while(m_micro_step_num != 0){};
 		Timer1.stop();
 	}
 };
@@ -236,43 +234,60 @@ CA4998* CA4998::static_object = nullptr;
 void CA4998::staticTimerFunc()
 {
 	static bool pulse_level_high = false;
+	const int32_t accel_dt_ms = 50;
+	const float accel_pps = 10000; // Acceleration ramp value
+	const float accel_ppdt = accel_pps * accel_dt_ms / 1000;
+	const float pps_epsilon = 0.01;
 
 	if(static_object) {
-		digitalWrite(static_object->m_step_pin, pulse_level_high? HIGH : LOW);
-		pulse_level_high = !pulse_level_high;
+		if (pulse_level_high == false)
+		{
+			digitalWrite(static_object->m_step_pin, HIGH);
+			pulse_level_high = true;
 
-		// Count pulses to sync mode changes with the HOME state
-		int last_edge = static_object->m_num_steps_current_mode * 2;
-		if (++(static_object->m_micro_step_num) >= last_edge) {
-			static_object->m_micro_step_num = 0;
-		}
-
-		// Accelerate to target pulse period
-		int32_t target_period_us = static_object->m_timer_target_period_us;
-		int32_t current_period_us = static_object->m_timer_current_period_us;
-		if (current_period_us != target_period_us) {
-			int32_t current_time_ms = millis();
-			if (current_time_ms - static_object->m_last_change_ms > 50)
+			// Count rising pulses to sync mode changes with the HOME state
+			int last_edge = static_object->m_steps_in_current_mode;
+			if (++(static_object->m_micro_step_num) >= last_edge)
 			{
-				digitalWrite(LED_BUILTIN, HIGH);
-				int32_t next_period_us = 0;
+				static_object->m_micro_step_num = 0;
+			}
 
-				// limit acceleration
-				int32_t change = (current_period_us-target_period_us) / 4;
-				if (change != 0) {
-					next_period_us = current_period_us - change;
-				} else {
-					next_period_us = target_period_us;
-				}
-				Timer1.initialize(next_period_us);
-				Timer1.start();
-				static_object->m_timer_current_period_us = next_period_us;
-				static_object->m_last_change_ms = current_time_ms;
-				if (next_period_us == target_period_us) {
+		} else // pulse_level_high == true
+		{
+			digitalWrite(static_object->m_step_pin, LOW);
+			pulse_level_high = false;
+
+			int32_t current_time_ms = millis();
+			if (current_time_ms - static_object->m_last_accel_ms > accel_dt_ms)
+			{
+				// Acceleration math on falling edges every accel_dt_ms
+				float current_pps = static_object->m_current_pps;
+				float target_pps = static_object->m_target_pps;
+				if (fabs(current_pps - target_pps) < pps_epsilon)
+				{
+					// no acceleration requited.
 					digitalWrite(LED_BUILTIN, LOW);
 				}
+				else
+				{
+					// acceleration required
+					digitalWrite(LED_BUILTIN, HIGH);
+					if (current_pps < target_pps) {
+						current_pps = min(target_pps, current_pps + accel_ppdt);
+					}
+					else {
+						current_pps = max(target_pps, current_pps - accel_ppdt);
+					}
+
+					// Update timer period
+					uint32_t half_period_us = (1e6/2) / current_pps;
+					Timer1.initialize(half_period_us);
+
+					static_object->m_current_pps = current_pps;
+				}
+				static_object->m_last_accel_ms = current_time_ms;
 			}
-		}
+		} // end if pulse_level_high == true
 	}
 };
 
