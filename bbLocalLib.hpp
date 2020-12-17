@@ -49,6 +49,15 @@ public: // methods
 		}
 		return current_output;
 	};
+
+
 };
 
+/// My delay function that combines delay and delayMicros
+static void myDelayUs(uint32_t request_delay_us) {
+	uint32_t delay_us = request_delay_us % 1000;
+	uint32_t delay_ms = request_delay_us / 1000;
+	if (delay_us) delayMicroseconds(delay_us);
+	if (delay_ms) delay(delay_ms);
+}
 

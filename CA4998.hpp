@@ -9,7 +9,7 @@
 // Better control via timer 1 with start() and stop().
 //   singleStep(width_us) - One pulse HIGH for width_us/2 and LOW for width_us/2.
 //   start(pulse_per_sec) - Use Timer 1 to send pulses on m_step_pin
-//   changePPS(new_pps) - updates pps for alrady started timer.
+//   changePPS(new_pps) - updates pps for already started timer.
 //   stop() - stop sending pulses on m_step_pin
 //
 // setStepMode(1, 2, 4, 8, 16) - Select micro step mode.  1 is Full Steps.
@@ -28,6 +28,7 @@
 //   - Select Vref (volts) = Motor Current Limit (amps) / 2.5
 
 #pragma once
+#include "bbLocalLib.hpp"
 #include "TimerOne.h" // instantiates at Timer1 object.
 
 class CA4998
@@ -53,6 +54,7 @@ private: // members
 	int m_sleep_pin;
 	int m_step_pin;
 	int m_dir_pin;
+	bool m_timer1_running;
 	volatile int m_micro_step_num; // volatile because ISR changes it.
 	int m_steps_in_current_mode;
 	float m_target_pps;
@@ -61,13 +63,6 @@ private: // members
 	static CA4998* static_object;  // pointer so static ISR can find this object.
 
 private: // methods
-  /// My delay function that combines delay and delayMicros - TODO move to bbLocalLib
-	static void myDelayUs(uint32_t request_delay_us) {
-	  uint32_t delay_us = request_delay_us % 1000;
-	  uint32_t delay_ms = request_delay_us / 1000;
-		if (delay_us) delayMicroseconds(delay_us);
-		if (delay_ms) delay(delay_ms);
-	}
 
 public: // methods
 	explicit CA4998( // can be called before setup(), so no system calls
@@ -83,6 +78,7 @@ public: // methods
 			m_reset_pin(pin5_reset),
 			m_sleep_pin(pin6_sleep),
 			m_enable_pin(pin1_enable),
+			m_timer1_running(false),
 			m_micro_step_num(0),
 			m_steps_in_current_mode(0),
 			m_target_pps(0),
@@ -93,7 +89,7 @@ public: // methods
 	}
 
 	void init(StepType initial_step_mode = FULL_STEP,
-					 DirectionType start_dir = CLOCKWISE) {
+					 DirectionType initial_dir   = CLOCKWISE) {
 
 		// Configure used arduino IO pins as outputs
 		pinMode(m_step_pin, OUTPUT);
@@ -106,11 +102,12 @@ public: // methods
 		if (m_sleep_pin)pinMode(m_sleep_pin, OUTPUT);
 
 		// initialize outputs to active state
-		this->setStepMode(initial_step_mode); // Sets reset() too.
-		this->setStepLevel(LOW);  // Ready for LOW to HIGH transition.
-		this->setDirection(start_dir); // HIGH clockwise, LOW counter
-		this->wake();             // Not sleeping in low power mode.
-		this->enable();           // all set, so enable
+		this->setStepLevel(LOW);               // Ready for LOW to HIGH transition
+		this->setDirection(initial_dir);
+		this->setStepMode(initial_step_mode);
+		this->reset();                         // Step translator to home state
+		this->wake();
+		this->enable();
 
 		// Prepare for timer operation
 		CA4998::static_object = this;
@@ -119,15 +116,14 @@ public: // methods
 
 	float currentPPS() const {return m_current_pps;};
 
-	void disable() const { digitalWrite(m_enable_pin, HIGH); };
+	void disable() const { if(m_enable_pin) digitalWrite(m_enable_pin, HIGH); };
 
-	void enable() const { digitalWrite(m_enable_pin, LOW); };
+	void enable() const { if(m_enable_pin) digitalWrite(m_enable_pin, LOW); };
 
 	void setStepMode(StepType step_mode)  // must be set 20ns before (& held 20ns after) step()
 	{
-		// Only change modes from HOME position - i.e. every 4 complete full steps
-		// If you've done a random stop, and then call this, you will get hung up here.
-		while(m_micro_step_num != 0){};
+		// If timer running, only change modes from HOME position - i.e. every 4 complete full steps
+		while(m_micro_step_num != 0 && m_timer1_running){};
 
 		switch(step_mode)
 		{
@@ -165,20 +161,20 @@ public: // methods
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
 				m_steps_in_current_mode = 1 * 4;
 		}
-
-		// Issue a reset
-		this->reset();
 	};
 
 	void setDirection(DirectionType dir_level) const {
 		if(m_dir_pin)digitalWrite(m_dir_pin, dir_level);
 	};
 
-	void reset() const {
-		if(m_reset_pin)digitalWrite(m_reset_pin, LOW);
-		delayMicroseconds(2);
-		if(m_reset_pin)digitalWrite(m_reset_pin, HIGH);
-		delayMicroseconds(2);
+	void reset() {
+		if(m_reset_pin) {
+			digitalWrite(m_reset_pin, LOW);
+			delayMicroseconds(2);
+			digitalWrite(m_reset_pin, HIGH);
+		  delayMicroseconds(2);
+		}
+		m_micro_step_num = 0; // Home state
 	};
 
 	void sleep() const { if(m_sleep_pin)digitalWrite(m_sleep_pin, LOW); };
@@ -213,6 +209,7 @@ public: // methods
 		Timer1.initialize(half_period_us);
 		Timer1.start();
 		m_last_accel_ms = millis();
+		m_timer1_running = true;
 	}
 
 	void changePPS(float new_pps)
@@ -223,6 +220,7 @@ public: // methods
 	void stop()
 	{
 		Timer1.stop();
+		m_timer1_running = false;
 	}
 };
 
@@ -234,20 +232,15 @@ CA4998* CA4998::static_object = nullptr;
 void CA4998::staticTimerFunc()
 {
 	static bool pulse_level_high = false;
-	const int32_t accel_dt_ms = 50;
-	const float accel_pps = 10000; // Acceleration ramp value
-	const float accel_ppdt = accel_pps * accel_dt_ms / 1000;
-	const float pps_epsilon = 0.01;
 
 	if(static_object) {
 		if (pulse_level_high == false)
 		{
-			digitalWrite(static_object->m_step_pin, HIGH);
+			digitalWrite(static_object->m_step_pin, HIGH); // motor outputs change now
 			pulse_level_high = true;
 
 			// Count rising pulses to sync mode changes with the HOME state
-			int last_edge = static_object->m_steps_in_current_mode;
-			if (++(static_object->m_micro_step_num) >= last_edge)
+			if (++(static_object->m_micro_step_num) >= static_object->m_steps_in_current_mode)
 			{
 				static_object->m_micro_step_num = 0;
 			}
@@ -257,15 +250,22 @@ void CA4998::staticTimerFunc()
 			digitalWrite(static_object->m_step_pin, LOW);
 			pulse_level_high = false;
 
+			const int32_t accel_dt_ms = 50;
+			const float accel_pps = 10000; // Acceleration ramp value
+			const float accel_ppdt = accel_pps * accel_dt_ms / 1000;
+			const float pps_epsilon = 0.001;
+
+			// Acceleration math on falling edges every accel_dt_ms
 			int32_t current_time_ms = millis();
 			if (current_time_ms - static_object->m_last_accel_ms > accel_dt_ms)
 			{
-				// Acceleration math on falling edges every accel_dt_ms
+				static_object->m_last_accel_ms = current_time_ms;
+
 				float current_pps = static_object->m_current_pps;
 				float target_pps = static_object->m_target_pps;
 				if (fabs(current_pps - target_pps) < pps_epsilon)
 				{
-					// no acceleration requited.
+					// no acceleration required.
 					digitalWrite(LED_BUILTIN, LOW);
 				}
 				else
@@ -285,7 +285,6 @@ void CA4998::staticTimerFunc()
 
 					static_object->m_current_pps = current_pps;
 				}
-				static_object->m_last_accel_ms = current_time_ms;
 			}
 		} // end if pulse_level_high == true
 	}

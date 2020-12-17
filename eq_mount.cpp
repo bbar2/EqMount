@@ -23,35 +23,36 @@ typedef enum {
 OpModeType current_mode;
 
 // Motor speed of each mode set by PULSE_US and STEP_MODE
-// NORMAL speed needs as many micro steps as possible, so SIXTEENTH_STEP.
-// FAST speeds up to 1000 RPM are limited by acceleration.
-// Pulse rate at SIXTEENTH_STEP limits RPM to about 500 RPM. not limited by pulse rate, and speed changes more reliable
-// with higher micro stepping.  Given the following combinations result
-// in the same motor speed:
+// NORMAL speed needs as many micro steps as possible, so SIXTEENTH_STEP
+// FAST speeds up to 1000 RPM are limited by acceleration
+// Pulse rate at SIXTEENTH_STEP limits RPM to about 500 RPM.
+// Given the following combinations result in the same motor speed:
 //   HALF_STEP at 400us,    QUARTER_STEP at 200us,
 //   EIGHTH_STEP at 100us,  or SIXTEENTH_STEP at 50us;
-// and mode changes add complexity due to the need to stop() for HOME
-// synchronization, I selected all SIXTEENTH_STEP modes.
+// and mode changes have a time performance hit waiting for HOME
+// synchronization, I selected SIXTEENTH_STEP modes fir NORMAL and FAST1.
+// Since FAST1 is so much faster than NORMAL, waiting for HOME does not take
+// long, so FAST2 can tolerate a mode change, enabling higher RPMs.
 static const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
 static const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
-static const CA4998::StepType FAST2_STEP_MODE  = CA4998::EIGHTH_STEP;
+static const CA4998::StepType FAST2_STEP_MODE  = CA4998::QUARTER_STEP;
 
 // Normal pulse rate is dependent on target speed and NORMAL_STEP_MODE.
-static const float TARGET_REVS_PER_DAY = 364.0/365.0;
-static const float STEPS_PER_DAY = TARGET_REVS_PER_DAY * 200.0 * 139.0 * 2.0; // 55,447.6
-static const float STEPS_PER_SEC = STEPS_PER_DAY / (24.0 * 60.0 * 60.0);   // 0.642
+static const float TARGET_REVS_PER_DAY = 364.0f/365.0f;
+static const float STEPS_PER_DAY = TARGET_REVS_PER_DAY * 200.0f * 139.0f * 2.0f; // 55,447.6
+static const float STEPS_PER_SEC = STEPS_PER_DAY / (24.0f * 60.0f * 60.0f);   // 0.642
 static const float NORMAL_PPS = NORMAL_STEP_MODE * STEPS_PER_SEC; // 10.27
 
 // FAST modes are limited by how fast the motor can turn.
 // Theoretical NEMA 17 max: 600-1500 RPM: function of accel, controller, and voltage
 // Arduino Nano timer ISR min pulse width ~20us, limiting max SIXTEENTH_STEP RPM to ~468
 // With QUARTER_STEP and acceleration limits I can get 1000 RPM.
-static const float FAST1_TARGET_RPM = 200.0; //350; //100.0;
-static const float FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0 / 60.0;
+static const float FAST1_TARGET_RPM = 100.0f; //350.0f; //100.0f;
+static const float FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0f / 60.0f;
 static const float FAST1_PPS = FAST1_STEPS_PER_SEC * FAST1_STEP_MODE;
 
-static const float FAST2_TARGET_RPM = 800; //375.0;
-static const float FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0 / 60.0;
+static const float FAST2_TARGET_RPM = 500.0f; //600.0f; //375.0f;
+static const float FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0f / 60.0f;
 static const float FAST2_PPS = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
 
 // Assign analog input channels
@@ -171,18 +172,18 @@ void loop() {
 	{
 		if (timer_running) {
 			motor_driver.stop();
+			motor_driver.sleep();
 			timer_running = false;
 			digitalWrite(LED_BUILTIN, HIGH);
-			motor_driver.sleep();
 		}
 	}
 	else // not sleep_mode
 	{
 		if (!timer_running){
 			motor_driver.start(step_pps(current_mode));
+			motor_driver.wake();
 			timer_running = true;
 			digitalWrite(LED_BUILTIN, LOW);
-			motor_driver.wake();
 		}
 
 		// Select operating mode based on pot position
@@ -191,30 +192,15 @@ void loop() {
 		// change OpMode
 		if (next_mode != current_mode)
 		{
-			// stop() can be expensive, so only change step mode if necessary
+			// setStepMode() can be expensive, so only change step mode if necessary
 			if (step_mode(next_mode) != step_mode(current_mode) )
 			{
-				Serial.println("THE SLOW ONE");
-				// waits up to 32 timer 1 pulses, allowing micro stepping
-				// driver state to return to HOME position
-				// Only change modes in HOME position
+				// waits up to 32 pulses for A4998 translator to return to HOME position
 				motor_driver.setStepMode(step_mode(next_mode));
 			}
-			Serial.print("The Quick One: Current Timer Period = ");
-			Serial.println(motor_driver.currentPPS());
 			motor_driver.setDirection(step_direction(next_mode));
 			motor_driver.changePPS(step_pps(next_mode));
 			current_mode = next_mode;
-		} else
-		{
-			uint32_t milli = millis();
-			static uint32_t last_milli = 0;
-			if (milli - last_milli > 1000)
-			{
-				Serial.print("Current Timer Period = ");
-				Serial.println(motor_driver.currentPPS());
-				last_milli = milli;
-			}
 		}
 
 	} // end not sleep_mode
