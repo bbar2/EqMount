@@ -30,12 +30,12 @@ OpModeType current_mode;
 //   HALF_STEP at 400us,    QUARTER_STEP at 200us,
 //   EIGHTH_STEP at 100us,  or SIXTEENTH_STEP at 50us;
 // and mode changes have a time performance hit waiting for HOME
-// synchronization, I selected SIXTEENTH_STEP modes fir NORMAL and FAST1.
+// synchronization, I selected SIXTEENTH_STEP modes for NORMAL and FAST1.
 // Since FAST1 is so much faster than NORMAL, waiting for HOME does not take
 // long, so FAST2 can tolerate a mode change, enabling higher RPMs.
 static const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
 static const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
-static const CA4998::StepType FAST2_STEP_MODE  = CA4998::QUARTER_STEP;
+static const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
 
 // Normal pulse rate is dependent on target speed and NORMAL_STEP_MODE.
 static const float TARGET_REVS_PER_DAY = 364.0f/365.0f;
@@ -51,7 +51,7 @@ static const float FAST1_TARGET_RPM = 100.0f; //350.0f; //100.0f;
 static const float FAST1_STEPS_PER_SEC = FAST1_TARGET_RPM * 200.0f / 60.0f;
 static const float FAST1_PPS = FAST1_STEPS_PER_SEC * FAST1_STEP_MODE;
 
-static const float FAST2_TARGET_RPM = 500.0f; //600.0f; //375.0f;
+static const float FAST2_TARGET_RPM = 350.0f;
 static const float FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0f / 60.0f;
 static const float FAST2_PPS = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
 
@@ -103,12 +103,20 @@ CA4998::DirectionType step_direction(OpModeType mode) {
 // Convert OpModeType to motor step period
 float step_pps(OpModeType mode)
 {
-	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1) {
-		return FAST1_PPS;
-	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
-		return FAST2_PPS;
-	} else {
-		return NORMAL_PPS;
+	switch (mode)
+	{
+		case FORWARD_NORMAL:
+			return NORMAL_PPS;
+		case FORWARD_FAST_1:
+			return FAST1_PPS;
+		case FORWARD_FAST_2:
+			return FAST2_PPS;
+		case REVERSE_FAST_1:
+			return -FAST1_PPS;
+		case REVERSE_FAST_2:
+			return -FAST2_PPS;
+		default:
+			return NORMAL_PPS;
 	}
 }
 
@@ -149,6 +157,13 @@ void setup() {
 	Serial.println(FAST2_STEP_MODE);
 	delay(1000);
 	#endif
+
+	int n = 0;
+	for (int x=0; x<10; x++)
+	{
+		if (++n >= 4) n = 0;
+		Serial.println(n);
+	}
 
 	current_mode = FORWARD_NORMAL;
 
@@ -195,10 +210,11 @@ void loop() {
 			// setStepMode() can be expensive, so only change step mode if necessary
 			if (step_mode(next_mode) != step_mode(current_mode) )
 			{
-				// waits up to 32 pulses for A4998 translator to return to HOME position
+				// waits up to 64 pulses for A4998 translator to return to HOME position
 				motor_driver.setStepMode(step_mode(next_mode));
 			}
-			motor_driver.setDirection(step_direction(next_mode));
+			// TODO clean up organization of step_direction vs direction via sign of pps
+//			motor_driver.setDirection(step_direction(next_mode)); -- now built into the sign of pps
 			motor_driver.changePPS(step_pps(next_mode));
 			current_mode = next_mode;
 		}

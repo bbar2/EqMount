@@ -56,7 +56,7 @@ private: // members
 	int m_dir_pin;
 	bool m_timer1_running;
 	volatile int m_micro_step_num; // volatile because ISR changes it.
-	int m_steps_in_current_mode;
+	int m_micro_step_home; // 4 * micro step mode
 	float m_target_pps;
 	volatile float m_current_pps; // volatile because ISR changes it.
 	volatile int32_t m_last_accel_ms;
@@ -65,7 +65,7 @@ private: // members
 private: // methods
 
 public: // methods
-	explicit CA4998( // can be called before setup(), so no system calls
+	explicit CA4998( // may be called before setup(), so no system calls
 			int pin7_step,    // only pin you must specify
 			int pin8_dir = 0, // floats - must be wired if not assigned to a pin.
 			int pin2_m1 = 0, int pin3_m2 = 0, int pin4_m3 = 0, // pulled LOW internally
@@ -80,7 +80,7 @@ public: // methods
 			m_enable_pin(pin1_enable),
 			m_timer1_running(false),
 			m_micro_step_num(0),
-			m_steps_in_current_mode(0),
+			m_micro_step_home(0),
 			m_target_pps(0),
 			m_current_pps(0),
 			m_last_accel_ms(0)
@@ -110,7 +110,7 @@ public: // methods
 		this->enable();
 
 		// Prepare for timer operation
-		CA4998::static_object = this;
+		CA4998::static_object = this; // TODO Remove this, since constructor sets it.
 		Timer1.attachInterrupt(CA4998::staticTimerFunc);
 	};
 
@@ -123,7 +123,7 @@ public: // methods
 	void setStepMode(StepType step_mode)  // must be set 20ns before (& held 20ns after) step()
 	{
 		// If timer running, only change modes from HOME position - i.e. every 4 complete full steps
-		while(m_micro_step_num != 0 && m_timer1_running){};
+		while(m_timer1_running && m_micro_step_num != 0){};
 
 		switch(step_mode)
 		{
@@ -131,35 +131,35 @@ public: // methods
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_steps_in_current_mode = 2 * 4; // *4 to complete a full cycle back to HOME state
+				m_micro_step_home = 2 * 4; // *4 to complete a full cycle back to HOME state
 				break;
 
 			case QUARTER_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_steps_in_current_mode = 4 * 4;
+				m_micro_step_home = 4 * 4;
 				break;
 
 			case EIGHTH_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_steps_in_current_mode = 8 * 4;
+				m_micro_step_home = 8 * 4;
 				break;
 
 			case SIXTEENTH_STEP:
 				if(m_m1_pin)digitalWrite(m_m1_pin, HIGH);
 				if(m_m2_pin)digitalWrite(m_m2_pin, HIGH);
 				if(m_m3_pin)digitalWrite(m_m3_pin, HIGH);
-				m_steps_in_current_mode = 16 * 4;
+				m_micro_step_home = 16 * 4;
 				break;
 
 			default:  // Full Step
 				if(m_m1_pin)digitalWrite(m_m1_pin, LOW);
 				if(m_m2_pin)digitalWrite(m_m2_pin, LOW);
 				if(m_m3_pin)digitalWrite(m_m3_pin, LOW);
-				m_steps_in_current_mode = 1 * 4;
+				m_micro_step_home = 1 * 4;
 		}
 	};
 
@@ -186,7 +186,7 @@ public: // methods
 	};
 
 	// Use this when not using the start() and stop() timer approach.
-	// This does not assure mode changes take place at micro step # 0.
+	// This does not assure mode changes take place at micro step #0.
 	void singleStep(uint32_t pulse_width_us = 200) const {
 
 		uint32_t half_width = pulse_width_us / 2;
@@ -205,7 +205,7 @@ public: // methods
 		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
 		m_target_pps = pps;
 		m_current_pps = pps;
-		uint32_t half_period_us = (1e6/2) / pps;
+		uint32_t half_period_us = (1e6/2) / pps; // TODO rewrite this as 1e6  / pps / 2
 		Timer1.initialize(half_period_us);
 		Timer1.start();
 		m_last_accel_ms = millis();
@@ -240,7 +240,7 @@ void CA4998::staticTimerFunc()
 			pulse_level_high = true;
 
 			// Count rising pulses to sync mode changes with the HOME state
-			if (++(static_object->m_micro_step_num) >= static_object->m_steps_in_current_mode)
+			if (++static_object->m_micro_step_num >= static_object->m_micro_step_home)
 			{
 				static_object->m_micro_step_num = 0;
 			}
@@ -251,7 +251,7 @@ void CA4998::staticTimerFunc()
 			pulse_level_high = false;
 
 			const int32_t accel_dt_ms = 50;
-			const float accel_pps = 10000; // Acceleration ramp value
+			const float accel_pps = 15000; // Acceleration ramp value
 			const float accel_ppdt = accel_pps * accel_dt_ms / 1000;
 			const float pps_epsilon = 0.001;
 
@@ -280,12 +280,19 @@ void CA4998::staticTimerFunc()
 					}
 
 					// Update timer period
-					uint32_t half_period_us = (1e6/2) / current_pps;
+					uint32_t half_period_us = (1e6/2) / fabs(current_pps);
 					Timer1.initialize(half_period_us);
+
+					// Set Direction TODO - state logic to reduce unnecessary IO
+					if (current_pps > 0) {
+						static_object->setDirection(CLOCKWISE);
+					} else {
+						static_object->setDirection(COUNTER_CLOCK);
+					}
 
 					static_object->m_current_pps = current_pps;
 				}
-			}
+			} // end if time > accel_dt_ms
 		} // end if pulse_level_high == true
 	}
 };
