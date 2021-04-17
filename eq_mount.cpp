@@ -56,14 +56,14 @@ static const float FAST2_STEPS_PER_SEC = FAST2_TARGET_RPM * 200.0f / 60.0f;
 static const float FAST2_PPS = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
 
 // Assign analog input channels
-static const int JOYSTICK_SWITCH = A2; // Analog to use internal pull up.
-static const int JOYSTICK_AXIS   = A1;
+static const int JOYSTICK_SWITCH = A4; // Analog to use internal pull up.
+static const int JOYSTICK_AXIS   = A5;
 
 // Construct the driver object, inputs select DIO channels (or A0-A5)
 CA4998 motor_driver(
-		11, 12,                 // pin7_step, pin8_dir
-		6, 7, 8,        // pin2_m1, pin3_m2, pin4_m3
-		9, 10, 5); // pin5_reset, pin6_sleep, pin1_enable
+		6, 5,                 // pin7_step, pin8_dir
+		11, 10, 9,        // pin2_m1, pin3_m2, pin4_m3
+		8, 7, 12); // pin5_reset, pin6_sleep, pin1_enable
 
 // Convert analog read of potentiometer, to operating mode
 OpModeType selectOpMode(unsigned int input_pot){
