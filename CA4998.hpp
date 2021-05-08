@@ -35,11 +35,6 @@
 class CA4998
 {
 public: // members
-	typedef enum {
-		FORWARD = HIGH,
-		REVERSE = LOW
-	} DirectionType;
-
 	typedef  enum {
 		FULL_STEP = 1,
 		HALF_STEP = 2,
@@ -49,6 +44,12 @@ public: // members
 	} StepType;
 
 private: // members
+	typedef enum {
+		FORWARD = HIGH,
+		REVERSE = LOW,
+		NOT_SET = -1
+	} DirectionType;
+
 	int m_enable_pin;
 	int m_m1_pin, m_m2_pin, m_m3_pin;
 	int m_reset_pin;
@@ -64,6 +65,14 @@ private: // members
 	static CA4998* static_object;  // pointer so static ISR can find this object.
 
 private: // methods
+	void setDirection(DirectionType dir_level) const {
+		static DirectionType current_direction = NOT_SET;
+		if (dir_level != current_direction) { // prevent redundant IO
+			if(m_dir_pin)digitalWrite(m_dir_pin, dir_level);
+			current_direction = dir_level;
+			DEBUG_PRINTLN2("dir_level = ", dir_level);
+		}
+	};
 
 public: // methods
 	explicit CA4998( // may be called before setup(), so no system calls
@@ -89,8 +98,7 @@ public: // methods
 		CA4998::static_object = this; // a non c++ target for the timer 1 interrupt
 	}
 
-	void init(StepType initial_step_mode = FULL_STEP,
-					 DirectionType initial_dir   = FORWARD) {
+	void init(StepType initial_step_mode = FULL_STEP) {
 
 		// Configure used arduino IO pins as outputs
 		pinMode(m_step_pin, OUTPUT);
@@ -104,14 +112,13 @@ public: // methods
 
 		// initialize outputs to active state
 		this->setStepLevel(LOW);               // Ready for LOW to HIGH transition
-		this->setDirection(initial_dir);
+		this->setDirection(FORWARD);  // Updated by start and ISR
 		this->setStepMode(initial_step_mode);
 		this->reset();                         // Step translator to home state
 		this->wake();
 		this->enable();
 
 		// Prepare for timer operation
-		CA4998::static_object = this; // TODO Remove this, since constructor sets it.
 		Timer1.attachInterrupt(CA4998::staticTimerFunc);
 	};
 
@@ -164,11 +171,7 @@ public: // methods
 		}
 	};
 
-	void setDirection(DirectionType dir_level) const {
-		if(m_dir_pin)digitalWrite(m_dir_pin, dir_level);
-		DEBUG_PRINT("dir_level = ");
-		DEBUG_PRINTLN(dir_level);
-	};
+
 
 	void reset() {
 		if(m_reset_pin) {
@@ -208,8 +211,15 @@ public: // methods
 		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
 		m_target_pps = pps;
 		m_current_pps = pps;
-		// TODO should probably do a setDirection here.  Then remove it from initIO()
-		uint32_t half_period_us = (1e6/2) / pps; // TODO rewrite this as 1e6  / pps / 2
+
+		if (m_current_pps > 0) {
+			static_object->setDirection(CA4998::FORWARD);
+		} else {
+			static_object->setDirection(CA4998::REVERSE);
+		}
+
+		uint32_t full_period_us = 1e6 / m_current_pps;
+		uint32_t half_period_us = full_period_us / 2;
 		Timer1.initialize(half_period_us);
 		Timer1.start();
 		m_last_accel_ms = millis();
@@ -287,7 +297,7 @@ void CA4998::staticTimerFunc()
 					uint32_t half_period_us = (1e6/2) / fabs(current_pps);
 					Timer1.initialize(half_period_us);
 
-					// Set Direction TODO - state logic to reduce unnecessary IO
+					// Set Direction
 					if (current_pps > 0) {
 						static_object->setDirection(CA4998::FORWARD);
 					} else {

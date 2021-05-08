@@ -16,8 +16,7 @@ typedef struct {
 } ShotGroup;
 
 const ShotGroup shot_list[] ={
-		{2, 5,10,2},
-		{2, 1,1,3}
+		{2, 5,30,30}
 };
 
 class CShutterControl

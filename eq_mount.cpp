@@ -13,10 +13,7 @@
 //   - NORMAL operation is near joystick neutral position.
 //   - moving away from neutral position speeds motor in either direction.
 // Joystick discrete switch toggles low power sleep mode.
-
-// TODO - look at Direction constants and PPS.  Direction is now determined by pps sign.
-// TODO - seems like Direction constants in here are OBE.
-
+// TODO - why two big clicks at startup.  Just noticed after cleaning up direction, joystick test, redundant set of this, pps equation, redundant IO in setDirection.  Maybe a low battery issue.
 typedef enum {
 	REVERSE_FAST_2,
 	REVERSE_FAST_1,
@@ -38,6 +35,9 @@ OpModeType current_mode;
 // synchronization, I selected SIXTEENTH_STEP modes for NORMAL and FAST1.
 // Since FAST1 is so much faster than NORMAL, waiting for HOME does not take
 // long, so FAST2 can tolerate a mode change, enabling higher RPMs.
+// TODO - But mode changes need to be in acceleration code in ISR - which is a lot for an ISR.
+// TODO   Could use a time delay.  If no joystick for X seconds, go to 16th, else use 4th.
+// TODO   Until I do this, use same step mode for all modes.
 static const CA4998::StepType NORMAL_STEP_MODE = CA4998::SIXTEENTH_STEP;
 static const CA4998::StepType FAST1_STEP_MODE  = CA4998::SIXTEENTH_STEP;
 static const CA4998::StepType FAST2_STEP_MODE  = CA4998::SIXTEENTH_STEP;
@@ -62,12 +62,14 @@ static const float FAST2_PPS = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
 
 // Assign analog input channels
 static const int JOYSTICK_SWITCH = A4; // Analog to use internal pull up.
-static const int JOYSTICK_AXIS   = A5;
+static const int JOYSTICK_AXIS_1 = A5; // TODO X or Y?
+static const int JOYSTICK_AXIS_2 = A6; // TODO X or Y?
+
 
 // Construct the motor driver object, inputs select DIO channels (or A0-A5)
 CA4998 motor_driver(
-		6, 5,                 // pin7_step, pin8_dir
-		11, 10, 9,        // pin2_m1, pin3_m2, pin4_m3
+		6, 5,                   // pin7_step, pin8_dir
+		11, 10, 9,      // pin2_m1, pin3_m2, pin4_m3
 		8, 7, 12); // pin5_reset, pin6_sleep, pin1_enable
 
 CShutterControl shutter_control(3, 4);
@@ -95,16 +97,9 @@ OpModeType selectOpMode(unsigned int input_pot){
 	}
 }
 
-// Convert OpModeType to motor step direction
-CA4998::DirectionType stepDirection(OpModeType mode) {
-	// Looking up at sky: stars rotate counter clockwise around north star
-	// Looking down at shaft: rotate clockwise, so looking up matches sky
-	// Looking down at motor: rotate counter clock, since geared opposite shaft
-	if (mode == FORWARD_NORMAL || mode == FORWARD_FAST_1 || mode == FORWARD_FAST_2) {
-		return CA4998::FORWARD;
-	} else {
-		return CA4998::REVERSE;
-	}
+bool joystickConnected() {
+	float unused_axis = analogRead(JOYSTICK_AXIS_2);
+	return unused_axis < 700; // as long as not pushed to 70% high
 }
 
 // Convert OpModeType to motor step period
@@ -141,6 +136,7 @@ CA4998::StepType stepMode(OpModeType mode) {
 void setup() {
 
 	pinMode(JOYSTICK_SWITCH, INPUT_PULLUP);  // for joystick switch input
+	pinMode(JOYSTICK_AXIS_2, INPUT_PULLUP);  // TODO - This does not seem to work to detect disconnected joystick.
 	pinMode(LED_BUILTIN, OUTPUT);
 
 	DEBUG_INIT
@@ -162,13 +158,10 @@ void setup() {
 	DEBUG_PRINT(FAST2_PPS);
 	DEBUG_PRINT(" x:");
 	DEBUG_PRINTLN(FAST2_STEP_MODE);
-	delay(1000);
 
 	current_mode = FORWARD_NORMAL;
 
-	motor_driver.init(
-			stepMode(current_mode),
-			stepDirection(current_mode));
+	motor_driver.init(stepMode(current_mode));
 	motor_driver.start(stepPps(current_mode));
 
 	shutter_control.initIO();
@@ -205,7 +198,10 @@ void loop() {
 		}
 
 		// Select operating mode based on pot position
-		OpModeType next_mode = selectOpMode(analogRead(JOYSTICK_AXIS));
+		OpModeType next_mode = FORWARD_NORMAL;
+		if (joystickConnected()) {
+			next_mode = selectOpMode(analogRead(JOYSTICK_AXIS_1));
+		}
 
 		// change OpMode
 		if (next_mode != current_mode)
