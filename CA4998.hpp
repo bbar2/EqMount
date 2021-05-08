@@ -208,7 +208,7 @@ public: // methods
 		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
 		m_target_pps = pps;
 		m_current_pps = pps;
-		// TODO should probably do a setDirection here.  Then remove it from init()
+		// TODO should probably do a setDirection here.  Then remove it from initIO()
 		uint32_t half_period_us = (1e6/2) / pps; // TODO rewrite this as 1e6  / pps / 2
 		Timer1.initialize(half_period_us);
 		Timer1.start();

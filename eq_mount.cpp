@@ -143,9 +143,7 @@ void setup() {
 	pinMode(JOYSTICK_SWITCH, INPUT_PULLUP);  // for joystick switch input
 	pinMode(LED_BUILTIN, OUTPUT);
 
-	#ifdef MY_DEBUG
-	Serial.begin(9600);
-	#endif
+	DEBUG_INIT
 
 	DEBUG_PRINT("Neutral Pot = ");
 	DEBUG_PRINTLN(analogRead(A6));
@@ -173,7 +171,7 @@ void setup() {
 			stepDirection(current_mode));
 	motor_driver.start(stepPps(current_mode));
 
-	shutter_control.init();
+	shutter_control.initIO();
 }
 
 

@@ -45,7 +45,7 @@ if(CMAKE_CURRENT_SOURCE_DIR MATCHES "/home/")
   # -To find idVendor and IDProduct values, plug in arduino, determine which port it's on, then:
   #    udevadm info -a -n /dev/ttyPort {e.g. ttyPort = ttyACM0 or ttyACM1}
 #  set(${PROJECT_NAME}_PORT /dev/ttyArduino)
-set(${PROJECT_NAME}_PORT /dev/ttyUSB1)
+set(${PROJECT_NAME}_PORT /dev/ttyUSB0)
 else()
 set(${PROJECT_NAME}_PORT /dev/cu.usbserial-141310)
 endif()
