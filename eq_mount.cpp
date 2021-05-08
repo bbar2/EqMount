@@ -2,6 +2,7 @@
 #include "CA4998.hpp"
 #include <math.h>
 #include "bbLocalLib.hpp"
+#include "CShutterControl.hpp"
 
 // Use CA4998.h micro step controller to control a camera mount stepper motor.
 //   - To match star motion, camera should rotate 364/365 revs per 24 hours.
@@ -13,6 +14,9 @@
 //   - moving away from neutral position speeds motor in either direction.
 // Joystick discrete switch toggles low power sleep mode.
 
+// TODO - look at Direction constants and PPS.  Direction is now determined by pps sign.
+// TODO - seems like Direction constants in here are OBE.
+
 typedef enum {
 	REVERSE_FAST_2,
 	REVERSE_FAST_1,
@@ -21,6 +25,7 @@ typedef enum {
 	FORWARD_FAST_2
 } OpModeType;
 OpModeType current_mode;
+
 
 // Motor speed of each mode set by PULSE_US and STEP_MODE
 // NORMAL speed needs as many micro steps as possible, so SIXTEENTH_STEP
@@ -59,11 +64,13 @@ static const float FAST2_PPS = FAST2_STEPS_PER_SEC * FAST2_STEP_MODE;
 static const int JOYSTICK_SWITCH = A4; // Analog to use internal pull up.
 static const int JOYSTICK_AXIS   = A5;
 
-// Construct the driver object, inputs select DIO channels (or A0-A5)
+// Construct the motor driver object, inputs select DIO channels (or A0-A5)
 CA4998 motor_driver(
 		6, 5,                 // pin7_step, pin8_dir
 		11, 10, 9,        // pin2_m1, pin3_m2, pin4_m3
 		8, 7, 12); // pin5_reset, pin6_sleep, pin1_enable
+
+CShutterControl shutter_control(3, 4);
 
 // Convert analog read of potentiometer, to operating mode
 OpModeType selectOpMode(unsigned int input_pot){
@@ -89,19 +96,19 @@ OpModeType selectOpMode(unsigned int input_pot){
 }
 
 // Convert OpModeType to motor step direction
-CA4998::DirectionType step_direction(OpModeType mode) {
+CA4998::DirectionType stepDirection(OpModeType mode) {
 	// Looking up at sky: stars rotate counter clockwise around north star
 	// Looking down at shaft: rotate clockwise, so looking up matches sky
 	// Looking down at motor: rotate counter clock, since geared opposite shaft
 	if (mode == FORWARD_NORMAL || mode == FORWARD_FAST_1 || mode == FORWARD_FAST_2) {
-		return CA4998::COUNTER_CLOCK;
+		return CA4998::FORWARD;
 	} else {
-		return CA4998::CLOCKWISE;
+		return CA4998::REVERSE;
 	}
 }
 
 // Convert OpModeType to motor step period
-float step_pps(OpModeType mode)
+float stepPps(OpModeType mode)
 {
 	switch (mode)
 	{
@@ -121,7 +128,7 @@ float step_pps(OpModeType mode)
 }
 
 // Convert OpModeType to motor controller micro step mode
-CA4998::StepType step_mode(OpModeType mode) {
+CA4998::StepType stepMode(OpModeType mode) {
 	if (mode == FORWARD_FAST_1 || mode == REVERSE_FAST_1) {
 		return FAST1_STEP_MODE;
 	} else if (mode == FORWARD_FAST_2 || mode == REVERSE_FAST_2) {
@@ -136,43 +143,39 @@ void setup() {
 	pinMode(JOYSTICK_SWITCH, INPUT_PULLUP);  // for joystick switch input
 	pinMode(LED_BUILTIN, OUTPUT);
 
-	#if 1
+	#ifdef MY_DEBUG
 	Serial.begin(9600);
-	Serial.print("Neutral Pot = ");
-	Serial.println(analogRead(A6));
-
-	Serial.print("NORMAL_PPS = ");
-	Serial.print(NORMAL_PPS);
-	Serial.print(" x:");
-	Serial.println(NORMAL_STEP_MODE);
-
-	Serial.print("FAST1_PPS = ");
-	Serial.print(FAST1_PPS);
-	Serial.print(" x:");
-	Serial.println(FAST1_STEP_MODE);
-
-	Serial.print("FAST2_PPS = ");
-	Serial.print(FAST2_PPS);
-	Serial.print(" x:");
-	Serial.println(FAST2_STEP_MODE);
-	delay(1000);
 	#endif
 
-	int n = 0;
-	for (int x=0; x<10; x++)
-	{
-		if (++n >= 4) n = 0;
-		Serial.println(n);
-	}
+	DEBUG_PRINT("Neutral Pot = ");
+	DEBUG_PRINTLN(analogRead(A6));
+
+	DEBUG_PRINT("NORMAL_PPS = ");
+	DEBUG_PRINT(NORMAL_PPS);
+	DEBUG_PRINT(" x:");
+	DEBUG_PRINTLN(NORMAL_STEP_MODE);
+
+	DEBUG_PRINT("FAST1_PPS = ");
+	DEBUG_PRINT(FAST1_PPS);
+	DEBUG_PRINT(" x:");
+	DEBUG_PRINTLN(FAST1_STEP_MODE);
+
+	DEBUG_PRINT("FAST2_PPS = ");
+	DEBUG_PRINT(FAST2_PPS);
+	DEBUG_PRINT(" x:");
+	DEBUG_PRINTLN(FAST2_STEP_MODE);
+	delay(1000);
 
 	current_mode = FORWARD_NORMAL;
 
 	motor_driver.init(
-			step_mode(current_mode),
-			step_direction(current_mode));
+			stepMode(current_mode),
+			stepDirection(current_mode));
+	motor_driver.start(stepPps(current_mode));
 
-	motor_driver.start(step_pps(current_mode));
+	shutter_control.init();
 }
+
 
 void loop() {
 	static debounceBool sleep_switch;
@@ -185,20 +188,22 @@ void loop() {
 
 	if (sleep_mode)
 	{
-		if (timer_running) {
+		if (timer_running) {  // need to go to sleep
 			motor_driver.stop();
 			motor_driver.sleep();
 			timer_running = false;
 			digitalWrite(LED_BUILTIN, HIGH);
+			shutter_control.stop();
 		}
 	}
 	else // not sleep_mode
 	{
-		if (!timer_running){
-			motor_driver.start(step_pps(current_mode));
+		if (!timer_running){  // need to wake up
+			motor_driver.start(stepPps(current_mode));
 			motor_driver.wake();
 			timer_running = true;
 			digitalWrite(LED_BUILTIN, LOW);
+			shutter_control.begin();
 		}
 
 		// Select operating mode based on pot position
@@ -208,16 +213,17 @@ void loop() {
 		if (next_mode != current_mode)
 		{
 			// setStepMode() can be expensive, so only change step mode if necessary
-			if (step_mode(next_mode) != step_mode(current_mode) )
+			if (stepMode(next_mode) != stepMode(current_mode) )
 			{
 				// waits up to 64 pulses for A4998 translator to return to HOME position
-				motor_driver.setStepMode(step_mode(next_mode));
+				motor_driver.setStepMode(stepMode(next_mode));
 			}
-			// TODO clean up organization of step_direction vs direction via sign of pps
-//			motor_driver.setDirection(step_direction(next_mode)); -- now built into the sign of pps
-			motor_driver.changePPS(step_pps(next_mode));
+			motor_driver.changePPS(stepPps(next_mode));
 			current_mode = next_mode;
 		}
+
+		// Take shots using schedule in shutter_control
+		shutter_control.run();
 
 	} // end not sleep_mode
 }

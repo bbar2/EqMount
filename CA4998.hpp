@@ -28,6 +28,7 @@
 //   - Select Vref (volts) = Motor Current Limit (amps) / 2.5
 
 #pragma once
+#include <Arduino.h>
 #include "bbLocalLib.hpp"
 #include "TimerOne.h" // instantiates at Timer1 object.
 
@@ -35,8 +36,8 @@ class CA4998
 {
 public: // members
 	typedef enum {
-		CLOCKWISE     = HIGH, // Rotation of gear, looking at top of motor shaft.
-		COUNTER_CLOCK = LOW
+		FORWARD = HIGH,
+		REVERSE = LOW
 	} DirectionType;
 
 	typedef  enum {
@@ -89,7 +90,7 @@ public: // methods
 	}
 
 	void init(StepType initial_step_mode = FULL_STEP,
-					 DirectionType initial_dir   = CLOCKWISE) {
+					 DirectionType initial_dir   = FORWARD) {
 
 		// Configure used arduino IO pins as outputs
 		pinMode(m_step_pin, OUTPUT);
@@ -165,6 +166,8 @@ public: // methods
 
 	void setDirection(DirectionType dir_level) const {
 		if(m_dir_pin)digitalWrite(m_dir_pin, dir_level);
+		DEBUG_PRINT("dir_level = ");
+		DEBUG_PRINTLN(dir_level);
 	};
 
 	void reset() {
@@ -205,6 +208,7 @@ public: // methods
 		// 2 ticks per period for rising and falling edge of 50% duty cycle pulse
 		m_target_pps = pps;
 		m_current_pps = pps;
+		// TODO should probably do a setDirection here.  Then remove it from init()
 		uint32_t half_period_us = (1e6/2) / pps; // TODO rewrite this as 1e6  / pps / 2
 		Timer1.initialize(half_period_us);
 		Timer1.start();
@@ -285,9 +289,9 @@ void CA4998::staticTimerFunc()
 
 					// Set Direction TODO - state logic to reduce unnecessary IO
 					if (current_pps > 0) {
-						static_object->setDirection(CLOCKWISE);
+						static_object->setDirection(CA4998::FORWARD);
 					} else {
-						static_object->setDirection(COUNTER_CLOCK);
+						static_object->setDirection(CA4998::REVERSE);
 					}
 
 					static_object->m_current_pps = current_pps;

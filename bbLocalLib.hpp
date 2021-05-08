@@ -5,6 +5,17 @@
 
 #include <Arduino.h>
 
+#define MY_DEBUG
+#ifdef MY_DEBUG
+#define DEBUG_PRINT(X)   Serial.print(X);
+#define DEBUG_PRINTLN(X) Serial.println(X);
+#define DEBUG_PRINTLN2(X, Y) Serial.print(X); Serial.println(Y);
+#else
+#define DEBUG_PRINT(X)  // Do Nothing
+#define DEBUG_PRINTLN(X) // Do Nothing
+#define DEGUB_PRINTLN2(X, Y) // Do Nothing
+#endif
+
 /// Debounce logical inputs. instantiate static.  Examples:
 //   static debounceBool analogButton;
 //   bool toggle1_result = analogButton.toggleOnFallingEdge(analogRead(A0) < 500);
